@@ -1,0 +1,2663 @@
+// ========== 绿茵逐梦狂欢 · 1v1即时对抗足球赛 ==========
+var render = null, audio = null
+try { render = require('./js/render') } catch(e) { console.error('render fail', e) }
+try { audio = require('./js/audio') } catch(e) { console.error('audio fail', e) }
+if (!render) render = { drawPitchBG:function(){}, drawGoal:function(){}, drawPlayer:function(){},
+  drawBall:function(){}, drawMenuBG:function(){}, drawButton:function(){}, hitTest:function(){return false},
+  drawText:function(){}, drawStrokeText:function(){}, drawTeamBadge:function(){},
+  drawProgressBar:function(){}, roundRect:function(){}, lightenColor:function(c){return c} }
+if (!audio) audio = { startBGM:function(){}, stopBGM:function(){}, playKick:function(){},
+  playGoal:function(){}, playMiss:function(){}, playWhistle:function(){}, playTick:function(){}, playCheer:function(){} }
+
+var CLOUD_ENV = 'cloud1-9gg9bbsw4c401373'
+try { if (wx.cloud) wx.cloud.init({ env: CLOUD_ENV }) } catch(e) {}
+
+// ===== 系统 =====
+var info = wx.getSystemInfoSync()
+var W = info.screenWidth, H = info.screenHeight, dpr = info.pixelRatio
+var safeTop = (info.safeArea && info.safeArea.top) || 0
+var canvas = wx.createCanvas()
+canvas.width = W * dpr; canvas.height = H * dpr
+var ctx = canvas.getContext('2d')
+ctx.scale(dpr, dpr)
+
+// ===== 13支苏超城市战队 =====
+// 2026苏超官方球衣颜色（阿迪达斯设计，中式立领）
+var TEAMS = [
+  { city:'南京', color:'#1B3A8C', away:'#E8620A', buff:'金陵韧性', bType:'def', emoji:'🏯', bDesc:'防守范围+' },
+  { city:'苏州', color:'#C8102E', away:'#8C8C8C', buff:'江南灵动', bType:'spd', emoji:'🏮', bDesc:'移动速度+' },
+  { city:'南通', color:'#CC2222', away:'#2B4C8C', buff:'江海爆发', bType:'atk', emoji:'🐺', bDesc:'射门力量+' },
+  { city:'无锡', color:'#F5A0B8', away:'#FFFFFF', buff:'太湖之力', bType:'spd', emoji:'🍑', bDesc:'移动速度+' },
+  { city:'常州', color:'#D41920', away:'#D6EFD0', buff:'龙城之魂', bType:'def', emoji:'🐉', bDesc:'防守范围+' },
+  { city:'徐州', color:'#C41E24', away:'#F0C630', buff:'彭城铁军', bType:'atk', emoji:'⚔️', bDesc:'射门力量+' },
+  { city:'扬州', color:'#2B7A9E', away:'#E8820A', buff:'烟花三月', bType:'spd', emoji:'🌸', bDesc:'移动速度+' },
+  { city:'盐城', color:'#D42030', away:'#6CB4E0', buff:'鹤乡之风', bType:'def', emoji:'🦩', bDesc:'防守范围+' },
+  { city:'泰州', color:'#1A2E6C', away:'#D4A820', buff:'凤城之志', bType:'atk', emoji:'🔥', bDesc:'射门力量+' },
+  { city:'镇江', color:'#8C1A5A', away:'#6CB4E8', buff:'京口雄风', bType:'def', emoji:'🏔️', bDesc:'防守范围+' },
+  { city:'连云港', color:'#2060A8', away:'#E03020', buff:'海州之浪', bType:'spd', emoji:'🌊', bDesc:'移动速度+' },
+  { city:'淮安', color:'#1858A0', away:'#90C8E8', buff:'淮水之韵', bType:'atk', emoji:'💧', bDesc:'射门力量+' },
+  { city:'宿迁', color:'#3078C0', away:'#2E8B57', buff:'霸王之勇', bType:'atk', emoji:'👑', bDesc:'射门力量+' }
+]
+
+// 2026世界杯参赛队（可选+对手，每队有BUFF）
+var WC_TEAMS = [
+  // 亚洲
+  { city:'中国',   color:'#DE2910', emoji:'🇨🇳', buff:'龙的传人', bType:'def', bDesc:'防守范围+' },
+  { city:'日本',   color:'#00247D', emoji:'🇯🇵', buff:'武士之魂', bType:'spd', bDesc:'移动速度+' },
+  { city:'韩国',   color:'#C60C30', emoji:'🇰🇷', buff:'太极战意', bType:'atk', bDesc:'射门力量+' },
+  { city:'澳大利亚', color:'#F4D03F', emoji:'🇦🇺', buff:'袋鼠跳跃', bType:'spd', bDesc:'移动速度+' },
+  { city:'沙特',   color:'#006C35', emoji:'🇸🇦', buff:'沙漠之鹰', bType:'atk', bDesc:'射门力量+' },
+  // 欧洲
+  { city:'法国',   color:'#002395', emoji:'🇫🇷', buff:'高卢雄鸡', bType:'atk', bDesc:'射门力量+' },
+  { city:'德国',   color:'#DD0000', emoji:'🇩🇪', buff:'日耳曼战车', bType:'def', bDesc:'防守范围+' },
+  { city:'西班牙', color:'#C60B1E', emoji:'🇪🇸', buff:'斗牛士',   bType:'spd', bDesc:'移动速度+' },
+  { city:'英格兰', color:'#CF081F', emoji:'🏴󠁧󠁢󠁥󠁮󠁧󠁿', buff:'三狮军团', bType:'def', bDesc:'防守范围+' },
+  { city:'葡萄牙', color:'#006600', emoji:'🇵🇹', buff:'航海先锋', bType:'atk', bDesc:'射门力量+' },
+  { city:'荷兰',   color:'#FF6600', emoji:'🇳🇱', buff:'橙色风暴', bType:'spd', bDesc:'移动速度+' },
+  { city:'意大利', color:'#0066CC', emoji:'🇮🇹', buff:'蓝衣军团', bType:'def', bDesc:'防守范围+' },
+  // 南美
+  { city:'巴西',   color:'#009739', emoji:'🇧🇷', buff:'桑巴军团', bType:'spd', bDesc:'移动速度+' },
+  { city:'阿根廷', color:'#74ACDF', emoji:'🇦🇷', buff:'潘帕斯雄鹰', bType:'atk', bDesc:'射门力量+' },
+  // 北美（东道主）
+  { city:'美国',   color:'#002868', emoji:'🇺🇸', buff:'星条旗',   bType:'spd', bDesc:'移动速度+' },
+  { city:'墨西哥', color:'#006847', emoji:'🇲🇽', buff:'阿兹特克', bType:'atk', bDesc:'射门力量+' },
+  // 非洲
+  { city:'摩洛哥', color:'#C1272D', emoji:'🇲🇦', buff:'沙漠之狐', bType:'def', bDesc:'防守范围+' },
+  { city:'塞内加尔', color:'#009639', emoji:'🇸🇳', buff:'特兰加雄狮', bType:'atk', bDesc:'射门力量+' }
+]
+
+// 苏超联赛赛程（6场）
+var LEAGUE_SCHEDULE = [
+  { stage:'小组赛', round:'A组第1场', diff: 0.3 },
+  { stage:'小组赛', round:'A组第2场', diff: 0.4 },
+  { stage:'小组赛', round:'A组第3场', diff: 0.5 },
+  { stage:'淘汰赛', round:'四分之一决赛', diff: 0.6 },
+  { stage:'淘汰赛', round:'半决赛', diff: 0.75 },
+  { stage:'决赛',   round:'苏超冠军决赛', diff: 0.9 }
+]
+
+// 2026世界杯赛程（7场完整晋级之路）
+// 赛事日期：2026年6月11日 - 7月19日，美国·加拿大·墨西哥
+var WC_SCHEDULE = [
+  { stage:'小组赛', round:'A组 第1轮',    date:'6月12日', diff: 0.35 },
+  { stage:'小组赛', round:'A组 第2轮',    date:'6月17日', diff: 0.42 },
+  { stage:'小组赛', round:'A组 第3轮',    date:'6月22日', diff: 0.5 },
+  { stage:'淘汰赛', round:'1/8决赛',      date:'6月29日', diff: 0.6 },
+  { stage:'淘汰赛', round:'1/4决赛',      date:'7月5日',  diff: 0.72 },
+  { stage:'淘汰赛', round:'半决赛',       date:'7月10日', diff: 0.85 },
+  { stage:'决赛',   round:'世界杯决赛 🏆', date:'7月19日', diff: 0.95 }
+]
+
+// ===== 存档管理 =====
+function loadData() {
+  return {
+    nickname: wx.getStorageSync('nickname') || '',
+    teamIdx: wx.getStorageSync('teamIdx'),      // 苏超战队索引
+    wcTeamIdx: wx.getStorageSync('wcTeamIdx'),   // 世界杯战队索引
+    coins: wx.getStorageSync('coins') || 0,
+    stats: wx.getStorageSync('stats') || { atk: 1, spd: 1, def: 1 },
+    leagueWins: wx.getStorageSync('leagueWins') || [],
+    wcWins: wx.getStorageSync('wcWins') || [],
+    dailyDone: wx.getStorageSync('dailyDone_' + todayStr()) || {}
+  }
+}
+function saveField(key, val) { wx.setStorageSync(key, val) }
+function todayStr() { var d = new Date(); return d.getFullYear()+'-'+(d.getMonth()+1)+'-'+d.getDate() }
+
+var D = loadData()
+if (typeof D.teamIdx !== 'number' || D.teamIdx < 0 || D.teamIdx >= TEAMS.length) D.teamIdx = -1
+if (typeof D.wcTeamIdx !== 'number' || D.wcTeamIdx < 0 || D.wcTeamIdx >= WC_TEAMS.length) D.wcTeamIdx = -1
+
+// 战队选择模式：'league' = 苏超, 'wc' = 世界杯
+var teamSelectMode = 'league'
+
+// ===== 全局状态 =====
+var scene = 'home'
+// home, teamSelect, training, leagueMap, wcMap, prematch, match, matchResult, ranking
+var _nickInputting = false
+
+// ----- 球场安全区域（避开刘海和底部）-----
+var safeBottom = (info.safeArea && info.safeArea.bottom) ? (H - info.safeArea.bottom) : 0
+var PT = safeTop + 52     // 球场顶部（HUD下方）
+var PB = H - Math.max(safeBottom, 20) - 8  // 球场底部（安全区上方）
+var PH = PB - PT          // 球场可用高度
+var PL = W * 0.03         // 球场左边界
+var PR = W * 0.97         // 球场右边界
+// 球场坐标转换：f=0为球场顶，f=1为球场底
+function py(f) { return PT + PH * f }
+
+// ----- 比赛变量 -----
+var matchMode = 'league' // 'league' or 'wc'
+var matchIdx = 0          // 当前比赛索引
+var opponentTeam = null   // 对手信息 {city, color, emoji}
+var matchDiff = 0.5       // AI难度 0-1
+var matchTime = 0         // 比赛剩余时间(ms)
+var matchDuration = 90000 // 90秒一局
+var matchStartTime = 0
+var myGoals = 0, opGoals = 0
+var goalEvents = []       // [{time, side:'my'|'op', x, y}]
+var goalFlashTime = 0
+var goalFlashSide = ''
+var matchPaused = false
+var matchCountdown = 0    // 开球倒计时
+
+// 比赛人数模式
+var matchTeamSize = 11 // 2 或 11
+
+// 2v2 阵型（1球员 + 1守门员）
+// ST在中线稍前，GK在门线——开球时两队面对面跨中线
+var FORMATION_2 = [
+  { role:'ST',  hx:0.50, hy:0.48, num:9 },  // 接近中线
+  { role:'GK',  hx:0.50, hy:0.90, num:1 }   // 门线
+]
+
+// 11v11 阵型（4-3-3）
+var FORMATION = [
+  // 前锋线 (y≈0.22)
+  { role:'ST',  hx:0.50, hy:0.22, num:9 },  // 中锋
+  { role:'LW',  hx:0.18, hy:0.26, num:11 }, // 左边锋，略靠后
+  { role:'RW',  hx:0.82, hy:0.26, num:7 },  // 右边锋
+  // 中场线 (y≈0.48)
+  { role:'CM',  hx:0.32, hy:0.46, num:8 },  // 左中场
+  { role:'CM',  hx:0.68, hy:0.46, num:6 },  // 右中场
+  { role:'CDM', hx:0.50, hy:0.54, num:10 }, // 后腰（稍靠后）
+  // 后卫线 (y≈0.74)
+  { role:'LB',  hx:0.14, hy:0.72, num:3 },  // 左后卫
+  { role:'CB',  hx:0.38, hy:0.76, num:4 },  // 左中卫
+  { role:'CB',  hx:0.62, hy:0.76, num:5 },  // 右中卫
+  { role:'RB',  hx:0.86, hy:0.72, num:2 },  // 右后卫
+  // 守门员 (y≈0.94)
+  { role:'GK',  hx:0.50, hy:0.94, num:1 }
+]
+var PLAYER_R = 11
+var myTeam = []   // [{x,y,num,role}] 11人
+var opTeam = []   // 同上
+var ctrlIdx = 0   // 我方当前控制的球员索引（不含GK）
+// 安全设置ctrlIdx，永远不选GK
+function setCtrl(idx) { if (idx >= 0 && idx < gkIdx()) ctrlIdx = idx }
+var ball = { x:0, y:0, vx:0, vy:0, side:'', idx:-1, flyTarget:-1 }
+// side: 'my','op','','fly'  idx: 持球球员索引
+
+// 控制
+var touchDown = false, touchX = 0, touchY = 0, touchStartX = 0, touchStartY = 0
+// swipeVX/VY 已移除（未使用）
+
+// 比赛动画
+var particles = []  // {x,y,vx,vy,color,born,size}
+var floats = []     // {x,y,text,color,born}
+
+// ----- 新手引导 -----
+var guideStep = 0  // 0=不显示, 1=移动, 2=射门, 3=完成
+var guideTimer = 0
+var hasPlayedBefore = wx.getStorageSync('hasPlayed') || false
+
+// ----- 点球大战 -----
+var CHL_TOTAL = 5  // 每次挑战5球
+var chlShots = []   // 记录的射门 [{sx,sy,vx,vy}]
+var chlGoals = 0    // 进攻方进球数
+var chlSaves = 0    // 防守方扑救数
+var chlResults = [] // 每球结果 ['goal','miss','saved',...]
+var chlDefResults = [] // 防守方每球结果 ['save','fail',...]
+var chlRound = 0    // 当前第几球 0-4
+var chlPhase = ''   // 'ready','aim','flying','result','done'
+var chlBall = { x:0, y:0, vx:0, vy:0 }
+var chlGKX = 0      // 防守方守门员X
+var chlGKAIX = 0    // 进攻方AI守门员X
+var chlTimer = 0
+var chlId = ''      // 云端挑战ID
+var chlData = null  // 从云端拉取的挑战数据
+var chlRole = ''    // 'attack' or 'defend'
+var chlResultData = null // 最终对比结果
+var pendingChallengeId = '' // 从分享链接进入的挑战ID
+
+// ===== 昵称 =====
+function askNickname(cb) {
+  if (_nickInputting) return
+  _nickInputting = true
+  wx.showKeyboard({ defaultValue:'', maxLength:8, multiple:false, confirmHold:false, confirmType:'done' })
+  wx.onKeyboardConfirm(function(res) {
+    wx.offKeyboardConfirm(); wx.offKeyboardComplete(); _nickInputting = false
+    var name = (res.value||'').trim()
+    if (name) {
+      D.nickname = name.substring(0,8)
+      saveField('nickname', D.nickname)
+      wx.hideKeyboard()
+    }
+    if (cb) cb()
+  })
+  wx.onKeyboardComplete(function() {
+    wx.offKeyboardConfirm(); wx.offKeyboardComplete(); _nickInputting = false; wx.hideKeyboard()
+  })
+}
+
+// ===== BUFF 效果 =====
+// 获取当前模式下的我方战队信息
+function getMyTeam() {
+  if (matchMode === 'wc' && D.wcTeamIdx >= 0) return WC_TEAMS[D.wcTeamIdx]
+  if (D.teamIdx >= 0) return TEAMS[D.teamIdx]
+  return { city:'???', color:'#888', emoji:'❓', buff:'', bType:'', bDesc:'' }
+}
+
+function getStatValue(type) {
+  var base = D.stats[type] || 1
+  var team = getMyTeam()
+  if (team.bType === type) base += 0.5
+  return base
+}
+
+// ===== 帧循环 =====
+var lastFrameTime = Date.now()
+function frame() {
+  var now = Date.now()
+  var dt = Math.min(now - lastFrameTime, 33) // 最大33ms
+  lastFrameTime = now
+  try {
+    ctx.clearRect(0, 0, W, H)
+    if (scene === 'home') drawHome()
+    else if (scene === 'teamSelect') drawTeamSelect()
+    else if (scene === 'training') drawTraining()
+    else if (scene === 'leagueMap') drawLeagueMap()
+    else if (scene === 'wcMap') drawWCMap()
+    else if (scene === 'prematch') drawPrematch()
+    else if (scene === 'match') { try { updateMatch(dt) } catch(me) { console.error('updateMatch error', me) }; drawMatch() }
+    else if (scene === 'matchResult') drawMatchResult()
+    // ranking已移除
+    else if (scene === 'chlAttack') { updateChlAttack(dt); drawChlAttack() }
+    else if (scene === 'chlDefend') { updateChlDefend(dt); drawChlDefend() }
+    else if (scene === 'chlResult') drawChlResult()
+  } catch(e) { console.error('frame error', e) }
+  requestAnimationFrame(frame)
+}
+
+// ==================== 首页 ====================
+function drawHome() {
+  var t = Date.now() / 1000
+  render.drawMenuBG(ctx, W, H, t)
+  var cx = W / 2, st = safeTop
+
+  // 标题
+  var titleY = st + H * 0.1
+  ctx.shadowColor = '#4CAF50'; ctx.shadowBlur = 15 + Math.sin(t * 2) * 5
+  render.drawStrokeText(ctx, '绿茵逐梦', cx, titleY, 'bold ' + (W * 0.11) + 'px sans-serif', '#fff', 'rgba(0,60,0,0.5)', 4)
+  ctx.shadowBlur = 0
+  render.drawText(ctx, '⚽ 狂 欢 ⚽', cx, titleY + W * 0.08, 'bold ' + (W * 0.045) + 'px sans-serif', '#ffd700')
+
+  // 战队信息卡片
+  var infoY = st + H * 0.23
+  var cardH = D.teamIdx >= 0 ? 55 : 35
+  ctx.fillStyle = 'rgba(255,255,255,0.03)'
+  render.roundRect(ctx, W * 0.1, infoY - 12, W * 0.8, cardH, 8); ctx.fill()
+
+  if (D.teamIdx >= 0) {
+    var sTeam = TEAMS[D.teamIdx]
+    // 战队名 + buff + 换队按钮
+    render.drawText(ctx, sTeam.emoji + ' ' + sTeam.city + ' · ' + sTeam.buff, cx - W * 0.02, infoY + 5, 'bold ' + (W * 0.03) + 'px sans-serif', safeColor(sTeam.color), 'center')
+    render.drawText(ctx, '🔄换队', W * 0.82, infoY + 5, (W * 0.022) + 'px sans-serif', 'rgba(255,255,255,0.35)', 'center')
+    // 昵称 + 金币
+    var bottomLine = D.nickname ? ('⚽ ' + D.nickname + '  💰' + D.coins) : '💰' + D.coins
+    render.drawText(ctx, bottomLine, cx, infoY + 28, (W * 0.025) + 'px sans-serif', 'rgba(255,255,255,0.4)')
+  } else {
+    var blink = 0.5 + Math.sin(t * 3) * 0.5
+    ctx.globalAlpha = blink
+    render.drawText(ctx, '👆 点击选择城市战队', cx, infoY + 8, 'bold ' + (W * 0.032) + 'px sans-serif', '#ffd700')
+    ctx.globalAlpha = 1
+  }
+
+  // 昵称（未设置时单独显示）
+  if (!D.nickname && D.teamIdx >= 0) {
+    ctx.globalAlpha = 0.5 + Math.sin(t * 3) * 0.5
+    render.drawText(ctx, '👆 设置昵称', cx, infoY + 28, (W * 0.025) + 'px sans-serif', '#ffd700')
+    ctx.globalAlpha = 1
+  }
+
+  // 主按钮 — 苏超联赛（大按钮）
+  var bw = W * 0.7, bh = W * 0.14, bx = cx - bw / 2
+  var mainBtnY = H * 0.42
+  if (D.teamIdx < 0) {
+    render.drawText(ctx, '⚠️ 请先选择城市战队', cx, mainBtnY - 16, (W * 0.028) + 'px sans-serif', '#ff6b6b')
+  }
+  var mainScale = 1 + Math.sin(t * 2) * 0.015
+  ctx.save(); ctx.translate(cx, mainBtnY + bh / 2); ctx.scale(mainScale, mainScale); ctx.translate(-cx, -(mainBtnY + bh / 2))
+  render.drawButton(ctx, bx, mainBtnY, bw, bh, '🏟️ 苏超联赛', ['#2E7D32', '#4CAF50'])
+  ctx.restore()
+
+  // 联赛进度提示
+  var leagueHint = D.leagueWins.length > 0 ? '进度 ' + D.leagueWins.length + '/' + 6 : '开启征程'
+  render.drawText(ctx, leagueHint, cx, mainBtnY + bh + 12, (W * 0.024) + 'px sans-serif', 'rgba(255,255,255,0.25)')
+
+  // 底部功能按钮行
+  var sBtnW = W * 0.28, sBtnH = W * 0.09
+  var sBtnY = H * 0.68, sBtnGap = 6
+  // 世界杯只在2026.6.1~7.31期间显示
+  var now2 = new Date(), wcOpen = (now2.getFullYear() === 2026 && now2.getMonth() >= 5 && now2.getMonth() <= 6)
+  var sbtns = []
+  if (wcOpen) sbtns.push({ text:'🌍 世界杯', colors:['#1565C0','#1E88E5'], action:'wc' })
+  sbtns.push({ text:'⚽ 点球大战', colors:['#C62828','#E53935'], action:'pk' })
+  sbtns.push({ text:'💪 训练', colors:['#E65100','#FF9800'], action:'train' })
+  var totalSW = sbtns.length * sBtnW + (sbtns.length - 1) * sBtnGap
+  var sStartX = cx - totalSW / 2
+  for (var si = 0; si < sbtns.length; si++) {
+    render.drawButton(ctx, sStartX + si * (sBtnW + sBtnGap), sBtnY, sBtnW, sBtnH, sbtns[si].text, sbtns[si].colors)
+  }
+
+  render.drawText(ctx, '滑动操控 · 即时对抗 · 90秒一局', cx, H * 0.88, (W * 0.02) + 'px sans-serif', 'rgba(255,255,255,0.12)')
+}
+
+// ==================== 战队选择（支持苏超/世界杯两种模式）====================
+function drawTeamSelect() {
+  var t = Date.now() / 1000
+  render.drawMenuBG(ctx, W, H, t)
+  var cx = W / 2, st = safeTop + 6
+  var isWC = teamSelectMode === 'wc'
+  var pool = isWC ? WC_TEAMS : TEAMS
+  var selIdx = isWC ? D.wcTeamIdx : D.teamIdx
+
+  // 标题
+  var title = isWC ? '🌍 选择世界杯战队' : '🏟️ 选择苏超战队'
+  var titleColor = isWC ? '#1E88E5' : '#4CAF50'
+  render.drawStrokeText(ctx, title, cx, st + 24, 'bold ' + (W * 0.045) + 'px sans-serif', '#fff', 'rgba(0,40,40,0.4)', 3)
+  render.drawText(ctx, '← 返回', W * 0.12, st + 24, (W * 0.028) + 'px sans-serif', 'rgba(255,255,255,0.4)', 'center')
+
+  // BUFF说明
+  var buffY = st + 48
+  var bi = [
+    { icon:'💨', label:'速度', color:'#1E90FF' },
+    { icon:'💪', label:'力量', color:'#FF6B00' },
+    { icon:'🛡️', label:'韧性', color:'#D4213D' }
+  ]
+  for (var b = 0; b < 3; b++) {
+    render.drawText(ctx, bi[b].icon + bi[b].label, W * 0.17 + b * W * 0.33, buffY, (W * 0.022) + 'px sans-serif', bi[b].color)
+  }
+
+  // 战队网格
+  var cols = isWC ? 4 : 3
+  var cellW = W / cols, cellH = isWC ? 68 : 76
+  var gridTop = st + 66, badgeR = isWC ? 18 : 22
+
+  // 滚动区域（世界杯队伍多，需要紧凑布局）
+  for (var i = 0; i < pool.length; i++) {
+    var row = Math.floor(i / cols), col = i % cols
+    var bx = cellW * col + cellW / 2
+    var by = gridTop + row * cellH + 8
+    if (by > H - 100) continue // 超出屏幕跳过
+    render.drawTeamBadge(ctx, bx, by, badgeR, pool[i].color, pool[i].city, i === selIdx, pool[i].emoji)
+  }
+
+  // 选中信息
+  if (selIdx >= 0 && selIdx < pool.length) {
+    var selT = pool[selIdx]
+    var infoY = H - 90
+    ctx.fillStyle = 'rgba(0,0,0,0.3)'
+    render.roundRect(ctx, W * 0.08, infoY - 10, W * 0.84, 40, 8); ctx.fill()
+    render.drawText(ctx, selT.emoji + ' ' + selT.city + ' · ' + selT.buff + ' · ' + selT.bDesc, cx, infoY + 10, 'bold ' + (W * 0.03) + 'px sans-serif', selT.color)
+  }
+
+  // 确认按钮
+  var btnW = W * 0.5, btnH = W * 0.1
+  var btnY = H - 46
+  if (selIdx >= 0) {
+    render.drawButton(ctx, cx - btnW / 2, btnY, btnW, btnH, '✅ 确认出战', isWC ? ['#1565C0','#1E88E5'] : ['#2E7D32','#4CAF50'])
+  } else {
+    render.drawText(ctx, '请选择战队', cx, btnY + btnH / 2, (W * 0.03) + 'px sans-serif', 'rgba(255,255,255,0.3)')
+  }
+}
+
+// ==================== 球员训练 ====================
+function drawTraining() {
+  var t = Date.now() / 1000
+  render.drawMenuBG(ctx, W, H, t)
+  var cx = W / 2, st = safeTop + 10
+
+  render.drawStrokeText(ctx, '球员训练', cx, st + 28, 'bold ' + (W * 0.05) + 'px sans-serif', '#fff', 'rgba(0,60,0,0.4)', 3)
+  render.drawText(ctx, '← 返回', W * 0.12, st + 28, (W * 0.03) + 'px sans-serif', 'rgba(255,255,255,0.4)', 'center')
+
+  if (D.teamIdx >= 0) {
+    var team = TEAMS[D.teamIdx]
+    render.drawText(ctx, team.emoji + ' ' + team.city + ' · ' + team.buff, cx, st + 60, 'bold ' + (W * 0.035) + 'px sans-serif', team.color)
+  }
+  render.drawText(ctx, '💰 ' + D.coins + ' 金币', cx, st + 85, 'bold ' + (W * 0.04) + 'px sans-serif', '#ffd700')
+
+  var statNames = [
+    { key:'atk', name:'射门', icon:'⚽', color:'#FF6B00', desc:'提升射门球速和精度' },
+    { key:'spd', name:'速度', icon:'💨', color:'#1E90FF', desc:'提升球员移动和冲刺速度' },
+    { key:'def', name:'防守', icon:'🛡️', color:'#D4213D', desc:'扩大守门员扑救范围' }
+  ]
+
+  var cardY = st + 120
+  var cardH = 90
+  for (var i = 0; i < statNames.length; i++) {
+    var s = statNames[i]
+    var cy = cardY + i * (cardH + 12)
+    var lv = D.stats[s.key] || 1
+    var maxLv = 5
+    var cost = lv * 20
+
+    // 卡片背景
+    ctx.fillStyle = 'rgba(255,255,255,0.03)'
+    render.roundRect(ctx, W * 0.06, cy, W * 0.88, cardH, 12); ctx.fill()
+
+    // 图标+名称
+    render.drawText(ctx, s.icon + ' ' + s.name, W * 0.2, cy + 20, 'bold ' + (W * 0.04) + 'px sans-serif', s.color, 'center')
+    render.drawText(ctx, s.desc, W * 0.2, cy + 42, (W * 0.022) + 'px sans-serif', 'rgba(255,255,255,0.3)', 'center')
+
+    // 等级条
+    var barX = W * 0.38, barW = W * 0.35
+    render.drawProgressBar(ctx, barX, cy + 16, barW, 10, lv / maxLv, s.color)
+    render.drawText(ctx, 'Lv.' + lv + '/' + maxLv, barX + barW / 2, cy + 36, (W * 0.025) + 'px sans-serif', 'rgba(255,255,255,0.5)')
+
+    // 当前数值效果
+    var effectVal = getStatValue(s.key)
+    var effectTexts = {
+      atk: '球速 ×' + effectVal.toFixed(1),
+      spd: '跑速 ×' + effectVal.toFixed(1),
+      def: '扑救 ×' + effectVal.toFixed(1)
+    }
+    render.drawText(ctx, effectTexts[s.key], barX + barW / 2, cy + 52, (W * 0.02) + 'px sans-serif', s.color)
+
+    // 有BUFF加成标记
+    if (D.teamIdx >= 0 && TEAMS[D.teamIdx].bType === s.key) {
+      render.drawText(ctx, '★ 战队加成+0.5', barX + barW / 2, cy + 66, (W * 0.018) + 'px sans-serif', safeColor(TEAMS[D.teamIdx].color))
+    }
+
+    // 升级按钮
+    if (lv < maxLv) {
+      var ubw = W * 0.18, ubh = 28
+      var ubx = W * 0.78 - ubw / 2, uby = cy + 30
+      if (D.coins >= cost) {
+        render.drawButton(ctx, ubx, uby, ubw, ubh, '升级 ' + cost + '💰', ['#2E7D32', '#43A047'])
+      } else {
+        ctx.fillStyle = 'rgba(255,255,255,0.04)'
+        render.roundRect(ctx, ubx, uby, ubw, ubh, ubh / 2); ctx.fill()
+        render.drawText(ctx, cost + '💰', ubx + ubw / 2, uby + ubh / 2, (W * 0.024) + 'px sans-serif', 'rgba(255,255,255,0.25)')
+      }
+    } else {
+      render.drawText(ctx, '已满级', W * 0.78, cy + 44, (W * 0.026) + 'px sans-serif', '#ffd700')
+    }
+  }
+
+  // 日常任务
+  var taskY = cardY + 3 * (cardH + 12) + 10
+  render.drawText(ctx, '📋 每日任务', cx, taskY, 'bold ' + (W * 0.035) + 'px sans-serif', 'rgba(255,255,255,0.6)')
+  var tasks = [
+    { id:'login', name:'每日登录', reward: 10, done: D.dailyDone.login },
+    { id:'match1', name:'完成1场比赛', reward: 15, done: D.dailyDone.match1 },
+    { id:'win1', name:'赢得1场比赛', reward: 25, done: D.dailyDone.win1 }
+  ]
+  for (var ti = 0; ti < tasks.length; ti++) {
+    var task = tasks[ti]
+    var tty = taskY + 24 + ti * 28
+    var statusText = task.done ? '✅ 已完成' : '💰+' + task.reward
+    var statusColor = task.done ? 'rgba(255,255,255,0.25)' : '#ffd700'
+    render.drawText(ctx, task.name, cx - W * 0.1, tty, (W * 0.026) + 'px sans-serif', 'rgba(255,255,255,0.5)', 'center')
+    render.drawText(ctx, statusText, cx + W * 0.25, tty, (W * 0.024) + 'px sans-serif', statusColor, 'center')
+  }
+
+  // 领取每日登录
+  if (!D.dailyDone.login) {
+    D.dailyDone.login = true; D.coins += 10
+    saveField('dailyDone_' + todayStr(), D.dailyDone); saveField('coins', D.coins)
+  }
+}
+
+// ==================== 联赛地图 ====================
+function drawLeagueMap() {
+  var t = Date.now() / 1000
+  render.drawMenuBG(ctx, W, H, t)
+  var cx = W / 2, st = safeTop + 10
+
+  render.drawStrokeText(ctx, '🏟️ 苏超联赛', cx, st + 28, 'bold ' + (W * 0.05) + 'px sans-serif', '#fff', 'rgba(0,60,0,0.4)', 3)
+  render.drawText(ctx, '← 返回', W * 0.12, st + 28, (W * 0.03) + 'px sans-serif', 'rgba(255,255,255,0.4)', 'center')
+
+  var progress = D.leagueWins.length
+  var nodeY = st + 70
+  var nodeH = 68
+
+  for (var i = 0; i < LEAGUE_SCHEDULE.length; i++) {
+    var s = LEAGUE_SCHEDULE[i]
+    var ny = nodeY + i * nodeH
+    var played = i < progress
+    var current = i === progress
+    var locked = i > progress
+
+    // 连接线
+    if (i > 0) {
+      ctx.strokeStyle = played ? '#4CAF50' : 'rgba(255,255,255,0.08)'
+      ctx.lineWidth = 2
+      ctx.beginPath(); ctx.moveTo(cx, ny - nodeH + 50); ctx.lineTo(cx, ny + 8); ctx.stroke()
+    }
+
+    // 节点背景
+    ctx.fillStyle = current ? 'rgba(76,175,80,0.1)' : 'rgba(255,255,255,0.02)'
+    render.roundRect(ctx, W * 0.08, ny, W * 0.84, nodeH - 8, 10); ctx.fill()
+    if (current) {
+      ctx.strokeStyle = '#4CAF50'; ctx.lineWidth = 1
+      render.roundRect(ctx, W * 0.08, ny, W * 0.84, nodeH - 8, 10); ctx.stroke()
+    }
+
+    // 对手（从其他城市中选）
+    var opIdx = getLeagueOpponent(i)
+    var opTeam = TEAMS[opIdx]
+
+    // 状态图标
+    var icon = played ? '✅' : current ? '⚽' : '🔒'
+    render.drawText(ctx, icon, W * 0.15, ny + (nodeH - 8) / 2, (W * 0.05) + 'px sans-serif', '#fff')
+
+    // 赛事信息
+    render.drawText(ctx, s.stage + ' · ' + s.round, cx + W * 0.05, ny + 18, (W * 0.028) + 'px sans-serif',
+      locked ? 'rgba(255,255,255,0.2)' : 'rgba(255,255,255,0.6)', 'center')
+    render.drawText(ctx, 'vs ' + opTeam.emoji + ' ' + opTeam.city, cx + W * 0.05, ny + 40, 'bold ' + (W * 0.032) + 'px sans-serif',
+      locked ? 'rgba(255,255,255,0.15)' : opTeam.color, 'center')
+
+    // 已完成的比分
+    if (played) {
+      var result = D.leagueWins[i]
+      var rText = result.myGoals + ':' + result.opGoals
+      var rColor = result.myGoals > result.opGoals ? '#4CAF50' : result.myGoals < result.opGoals ? '#ff6b6b' : '#ffd700'
+      render.drawText(ctx, rText, W * 0.85, ny + (nodeH - 8) / 2, 'bold ' + (W * 0.04) + 'px sans-serif', rColor, 'center')
+    }
+  }
+
+  // 开始比赛按钮（当前场次）
+  if (progress < LEAGUE_SCHEDULE.length) {
+    var btnY = nodeY + LEAGUE_SCHEDULE.length * nodeH + 10
+    var bw = W * 0.5, bh = W * 0.11
+    render.drawButton(ctx, cx - bw / 2, btnY, bw, bh, '⚽ 开始比赛', ['#2E7D32', '#4CAF50'])
+  } else {
+    var btnY = nodeY + LEAGUE_SCHEDULE.length * nodeH + 10
+    render.drawText(ctx, '🏆 恭喜完成苏超联赛！', cx, btnY + 15, 'bold ' + (W * 0.035) + 'px sans-serif', '#ffd700')
+    var bw = W * 0.5, bh = W * 0.11
+    render.drawButton(ctx, cx - bw / 2, btnY + 40, bw, bh, '🔄 重新挑战', ['#E65100', '#FF9800'])
+  }
+}
+
+function getLeagueOpponent(matchIndex) {
+  // 为每场比赛分配不同城市对手（避开自己的城市）
+  var available = []
+  for (var i = 0; i < TEAMS.length; i++) { if (i !== D.teamIdx) available.push(i) }
+  return available[matchIndex % available.length]
+}
+
+// ==================== 世界杯地图 ====================
+// 为每场比赛生成固定对手（基于种子，保证同一存档对手不变）
+function getWCOpponent(matchIndex) {
+  // 从世界杯队伍中排除自己，选对手
+  var available = []
+  for (var i = 0; i < WC_TEAMS.length; i++) { if (i !== D.wcTeamIdx) available.push(i) }
+  var seed = (D.wcTeamIdx + 1) * 7 + matchIndex * 13
+  return WC_TEAMS[available[seed % available.length]]
+}
+
+function drawWCMap() {
+  var t = Date.now() / 1000
+  render.drawMenuBG(ctx, W, H, t)
+  var cx = W / 2, st = safeTop + 6
+
+  // 标题
+  render.drawStrokeText(ctx, '🌍 2026世界杯', cx, st + 22, 'bold ' + (W * 0.048) + 'px sans-serif', '#fff', 'rgba(0,40,100,0.5)', 3)
+  render.drawText(ctx, '美国 · 加拿大 · 墨西哥', cx, st + 44, (W * 0.024) + 'px sans-serif', 'rgba(255,255,255,0.3)')
+  render.drawText(ctx, '← 返回', W * 0.12, st + 22, (W * 0.03) + 'px sans-serif', 'rgba(255,255,255,0.4)', 'center')
+
+  // 你的世界杯战队
+  var wcT = D.wcTeamIdx >= 0 ? WC_TEAMS[D.wcTeamIdx] : null
+  if (wcT) {
+    render.drawText(ctx, wcT.emoji + ' ' + wcT.city + ' · ' + wcT.buff, cx, st + 62, 'bold ' + (W * 0.03) + 'px sans-serif', wcT.color)
+  } else {
+    render.drawText(ctx, '请先选择世界杯战队', cx, st + 62, (W * 0.03) + 'px sans-serif', 'rgba(255,255,255,0.4)')
+  }
+
+  // 解锁条件
+  if (D.leagueWins.length < 3) {
+    render.drawText(ctx, '🔒 完成苏超联赛小组赛后解锁', cx, H * 0.4, (W * 0.033) + 'px sans-serif', 'rgba(255,255,255,0.4)')
+    render.drawText(ctx, '联赛进度：' + D.leagueWins.length + '/3', cx, H * 0.46, (W * 0.028) + 'px sans-serif', 'rgba(255,255,255,0.25)')
+    return
+  }
+
+  var progress = D.wcWins.length
+  var nodeY = st + 82
+  var nodeH = 64
+
+  for (var i = 0; i < WC_SCHEDULE.length; i++) {
+    var s = WC_SCHEDULE[i]
+    var ny = nodeY + i * nodeH
+    var played = i < progress, current = i === progress, locked = i > progress
+    var opTeam = getWCOpponent(i)
+
+    // 连接线
+    if (i > 0) {
+      ctx.strokeStyle = played ? '#1E88E5' : 'rgba(255,255,255,0.06)'; ctx.lineWidth = 2
+      ctx.beginPath(); ctx.moveTo(cx, ny - nodeH + nodeH - 6); ctx.lineTo(cx, ny + 4); ctx.stroke()
+    }
+
+    // 阶段分隔标签（小组赛/淘汰赛/决赛）
+    if (i === 0 || WC_SCHEDULE[i].stage !== WC_SCHEDULE[i - 1].stage) {
+      var stageColors = { '小组赛':'#43A047', '淘汰赛':'#1E88E5', '决赛':'#FFD700' }
+      var sc = stageColors[s.stage] || '#888'
+      render.drawText(ctx, '— ' + s.stage + ' —', cx, ny - 2, (W * 0.022) + 'px sans-serif', sc)
+      ny += 10
+    }
+
+    // 节点背景
+    var cardColor = current ? 'rgba(30,136,229,0.12)' : 'rgba(255,255,255,0.02)'
+    ctx.fillStyle = cardColor
+    render.roundRect(ctx, W * 0.06, ny, W * 0.88, nodeH - 12, 8); ctx.fill()
+    if (current) {
+      ctx.strokeStyle = '#1E88E5'; ctx.lineWidth = 1
+      render.roundRect(ctx, W * 0.06, ny, W * 0.88, nodeH - 12, 8); ctx.stroke()
+    }
+
+    // 左侧状态
+    var icon = played ? '✅' : current ? '⚽' : '🔒'
+    render.drawText(ctx, icon, W * 0.12, ny + (nodeH - 12) / 2, (W * 0.04) + 'px sans-serif', '#fff')
+
+    // 赛事信息
+    var infoX = cx + W * 0.02
+    render.drawText(ctx, s.round, infoX, ny + 14, (W * 0.026) + 'px sans-serif',
+      locked ? 'rgba(255,255,255,0.15)' : 'rgba(255,255,255,0.55)', 'center')
+
+    // 对手
+    var opColor = locked ? 'rgba(255,255,255,0.12)' : opTeam.color === '#000000' ? '#666' : opTeam.color
+    var myFlag = (D.wcTeamIdx >= 0 ? WC_TEAMS[D.wcTeamIdx].emoji : '❓')
+    render.drawText(ctx, myFlag + ' vs ' + opTeam.emoji + ' ' + opTeam.city, infoX, ny + 36, 'bold ' + (W * 0.028) + 'px sans-serif', opColor, 'center')
+
+    // 日期
+    render.drawText(ctx, s.date, W * 0.88, ny + 14, (W * 0.02) + 'px sans-serif', 'rgba(255,255,255,0.2)', 'right')
+
+    // 已完成比分
+    if (played) {
+      var result = D.wcWins[i]
+      var rText = result.myGoals + ':' + result.opGoals
+      var rColor = result.myGoals > result.opGoals ? '#4CAF50' : result.myGoals < result.opGoals ? '#ff6b6b' : '#ffd700'
+      render.drawText(ctx, rText, W * 0.88, ny + 36, 'bold ' + (W * 0.035) + 'px sans-serif', rColor, 'right')
+    }
+  }
+
+  // 底部按钮
+  var btnAreaY = nodeY + WC_SCHEDULE.length * nodeH + 20
+  var bw = W * 0.5, bh = W * 0.11
+
+  if (progress < WC_SCHEDULE.length) {
+    render.drawButton(ctx, cx - bw / 2, btnAreaY, bw, bh, '⚽ 开始比赛', ['#1565C0', '#1E88E5'])
+  } else {
+    ctx.shadowColor = '#ffd700'; ctx.shadowBlur = 10
+    var champEmoji = D.wcTeamIdx >= 0 ? WC_TEAMS[D.wcTeamIdx].emoji : '🏆'
+    render.drawText(ctx, '🏆 世界杯冠军！' + champEmoji, cx, btnAreaY, 'bold ' + (W * 0.04) + 'px sans-serif', '#ffd700')
+    ctx.shadowBlur = 0
+    render.drawButton(ctx, cx - bw / 2, btnAreaY + 30, bw, bh, '🔄 卫冕之路', ['#1565C0', '#1E88E5'])
+  }
+}
+
+// ==================== 赛前 ====================
+function drawPrematch() {
+  var t = Date.now() / 1000
+  render.drawMenuBG(ctx, W, H, t)
+  var cx = W / 2
+  var myT = getMyTeam()
+
+  // VS 画面
+  var vsY = H * 0.35
+  // 我方
+  render.drawPlayer(ctx, cx - W * 0.22, vsY, 28, myT.color, myT.emoji, true)
+  render.drawText(ctx, myT.city, cx - W * 0.22, vsY + 46, 'bold ' + (W * 0.035) + 'px sans-serif', myT.color)
+
+  // VS
+  var vsScale = 1 + Math.sin(t * 3) * 0.08
+  ctx.save(); ctx.translate(cx, vsY); ctx.scale(vsScale, vsScale)
+  render.drawStrokeText(ctx, 'VS', 0, 0, 'bold ' + (W * 0.1) + 'px sans-serif', '#ffd700', 'rgba(0,0,0,0.5)', 4)
+  ctx.restore()
+
+  // 对方
+  render.drawPlayer(ctx, cx + W * 0.22, vsY, 28, opponentTeam.color, opponentTeam.emoji, true)
+  render.drawText(ctx, opponentTeam.city, cx + W * 0.22, vsY + 46, 'bold ' + (W * 0.035) + 'px sans-serif', opponentTeam.color)
+
+  // 赛事信息
+  var schedule = matchMode === 'league' ? LEAGUE_SCHEDULE : WC_SCHEDULE
+  var sched = schedule[matchIdx]
+  if (matchMode === 'wc') {
+    render.drawText(ctx, '🌍 2026世界杯 · ' + sched.round, cx, H * 0.15, 'bold ' + (W * 0.03) + 'px sans-serif', '#1E88E5')
+    render.drawText(ctx, sched.date + ' · 美加墨', cx, H * 0.19, (W * 0.025) + 'px sans-serif', 'rgba(255,255,255,0.35)')
+  } else {
+    render.drawText(ctx, sched.stage + ' · ' + sched.round, cx, H * 0.18, (W * 0.032) + 'px sans-serif', 'rgba(255,255,255,0.5)')
+  }
+
+  // 操作说明卡片
+  var cardY = H * 0.52, cardH = H * 0.28
+  ctx.fillStyle = 'rgba(255,255,255,0.03)'
+  render.roundRect(ctx, W*0.08, cardY, W*0.84, cardH, 12); ctx.fill()
+
+  render.drawText(ctx, '🎮 操作说明', cx, cardY + 18, 'bold '+(W*0.035)+'px sans-serif', 'rgba(255,255,255,0.7)')
+
+  var tips = [
+    { icon:'📱', text:'按住屏幕拖动 → 控制球员移动', color:'#4CAF50' },
+    { icon:'⚽', text:'靠近足球 → 自动带球', color:'#ffd700' },
+    { icon:'↑',  text:'带球时向上快速滑动 → 射门！', color:'#E53935' },
+    { icon:'🧤', text:'守门员自动防守，防守属性越高越强', color:'#1E90FF' }
+  ]
+  for (var i = 0; i < tips.length; i++) {
+    var tipY = cardY + 42 + i * 28
+    render.drawText(ctx, tips[i].icon, W*0.14, tipY, (W*0.04)+'px sans-serif', tips[i].color, 'center')
+    render.drawText(ctx, tips[i].text, W*0.22, tipY, (W*0.024)+'px sans-serif', 'rgba(255,255,255,0.5)', 'left')
+  }
+
+  render.drawText(ctx, '⏱ 比赛时长 90 秒', cx, cardY + cardH - 14, (W*0.024)+'px sans-serif', 'rgba(255,255,255,0.3)')
+
+  // 模式选择按钮
+  var modeBtnW = W * 0.38, modeBtnH = W * 0.1
+  var modeY = H * 0.78
+  var is2 = matchTeamSize === 2
+  // 2v2
+  render.drawButton(ctx, cx - modeBtnW - 6, modeY, modeBtnW, modeBtnH,
+    '👤 2v2 快速赛', is2 ? ['#2E7D32','#4CAF50'] : ['rgba(255,255,255,0.06)','rgba(255,255,255,0.03)'],
+    is2 ? '#fff' : 'rgba(255,255,255,0.4)')
+  // 11v11
+  render.drawButton(ctx, cx + 6, modeY, modeBtnW, modeBtnH,
+    '⚽ 11v11 正式赛', !is2 ? ['#1565C0','#1E88E5'] : ['rgba(255,255,255,0.06)','rgba(255,255,255,0.03)'],
+    !is2 ? '#fff' : 'rgba(255,255,255,0.4)')
+
+  // 开球按钮
+  var bw = W * 0.5, bh = W * 0.1
+  render.drawButton(ctx, cx - bw / 2, H * 0.88, bw, bh, '⚽ 开球！', ['#2E7D32', '#4CAF50'])
+  render.drawText(ctx, '← 返回', cx, H * 0.95, (W * 0.026) + 'px sans-serif', 'rgba(255,255,255,0.25)')
+}
+
+// ==================== 比赛核心（11v11）====================
+function px(f) { return PL + (PR - PL) * f }
+
+var matchCdNext = 0 // 下一次倒计时跳变的时间戳
+function initMatch() {
+  myGoals = 0; opGoals = 0; goalEvents = []; goalFlashTime = 0
+  goalFreezeUntil = 0
+  myAICooldown = 0; opAICooldown = 0
+  matchStartTime = Date.now(); matchTime = matchDuration
+  matchPaused = false; matchCountdown = 3
+  matchCdNext = Date.now() + 800 // 第一次倒计时在800ms后
+  particles = []; floats = []
+  guideStep = 0
+  initMatchPlayers()
+  audio.startBGM()
+}
+
+function getFormation() { return matchTeamSize === 2 ? FORMATION_2 : FORMATION }
+function gkIdx() { return getFormation().length - 1 } // GK始终是最后一个
+
+function initMatchPlayers() {
+  myTeam = []; opTeam = []
+  var fm = getFormation()
+  for (var i = 0; i < fm.length; i++) {
+    var f = fm[i]
+    myTeam.push({ x: px(f.hx), y: py(f.hy), num: f.num, role: f.role })
+    opTeam.push({ x: px(f.hx), y: py(1 - f.hy), num: f.num, role: f.role })
+  }
+  ctrlIdx = 0
+  ball.x = px(0.5); ball.y = py(0.5); ball.vx = 0; ball.vy = 0; ball.side = ''; ball.idx = -1
+}
+
+function updateMatch(dt) {
+  // 开球倒计时（在帧内处理，不依赖setInterval）
+  if (matchCountdown > 0) {
+    var now = Date.now()
+    if (now >= matchCdNext) {
+      matchCountdown--
+      audio.playTick()
+      matchCdNext = now + 800
+      if (matchCountdown <= 0) {
+        ball.side = 'my'; ball.idx = 0
+      }
+    }
+    return
+  }
+  // 进球后冻结
+  if (goalFreezeUntil > 0 && Date.now() < goalFreezeUntil) {
+    matchTime -= dt; return
+  }
+  matchTime -= dt
+  if (matchTime <= 0) { matchTime = 0; endMatch(); return }
+
+  var spdStat = getStatValue('spd'), atkStat = getStatValue('atk'), defStat = getStatValue('def')
+  var dtF = dt / 16 // 帧因子
+
+  // ==== 我方控制球员移动 ====
+  var cp = myTeam[ctrlIdx]
+  if (touchDown) {
+    var dx = touchX - cp.x, dy = touchY - cp.y
+    var dist = Math.sqrt(dx * dx + dy * dy)
+    if (dist > 3) {
+      var speed = (2.0 + spdStat * 0.4) * Math.min(dist / 40, 2.0) * dtF
+      cp.x += (dx / dist) * Math.min(speed, dist)
+      cp.y += (dy / dist) * Math.min(speed, dist)
+    }
+  }
+  cp.x = clamp(cp.x, PL + PLAYER_R, PR - PLAYER_R)
+  cp.y = clamp(cp.y, py(0.03), py(0.97))
+
+  // ==== 我方AI队友 ====
+  updateTeamAI(myTeam, opTeam, 'my', dt, spdStat, defStat)
+  // ==== 对方全队AI ====
+  updateTeamAI(opTeam, myTeam, 'op', dt, 1 + matchDiff, 1 + matchDiff * 0.5)
+
+  // ==== 球逻辑 ====
+  if (ball.side === 'freeze') return // 进球庆祝中
+  if (ball.side === 'my' || ball.side === 'op') {
+    // 带球：球紧跟持球者，微小偏移模拟带球
+    var carrier = ball.side === 'my' ? myTeam[ball.idx] : opTeam[ball.idx]
+    var dribDir = ball.side === 'my' ? -1 : 1
+    var targetBX = carrier.x
+    var targetBY = carrier.y + dribDir * (PLAYER_R + 3)
+    // 快速跟随，不要滞后太多
+    ball.x += (targetBX - ball.x) * 0.5
+    ball.y += (targetBY - ball.y) * 0.5
+    ball.vx = (targetBX - ball.x) * 2
+    ball.vy = (targetBY - ball.y) * 2
+  } else if (ball.side === 'fly') {
+    ball.x += ball.vx * dtF; ball.y += ball.vy * dtF
+    // 传球到达目标
+    if (ball.flyTarget >= 0) {
+      var tgt = ball.flySide === 'my' ? myTeam[ball.flyTarget] : opTeam[ball.flyTarget]
+      if (dist2(ball, tgt) < PLAYER_R * 3) {
+        ball.side = ball.flySide; ball.idx = ball.flyTarget; ball.flyTarget = -1
+        if (ball.side === 'my') setCtrl(ball.idx)
+        return
+      }
+      // 途中被拦截
+      var interceptTeam = ball.flySide === 'my' ? opTeam : myTeam
+      var interceptSide = ball.flySide === 'my' ? 'op' : 'my'
+      for (var ii = 0; ii < interceptTeam.length; ii++) {
+        if (dist2(ball, interceptTeam[ii]) < PLAYER_R * 2) {
+          ball.side = interceptSide; ball.idx = ii; ball.flyTarget = -1
+          if (interceptSide === 'my') setCtrl(ii)
+          floats.push({ x: ball.x, y: ball.y - 20, text:'拦截!', color: interceptSide === 'my' ? '#4CAF50' : '#ff6b6b', born: Date.now() })
+          audio.playKick(1); return
+        }
+      }
+    }
+    // 射门检测 — 球过了GK的Y坐标就判定
+    var goalW = W * 0.42, goalCX = W / 2
+    var opGKY = opTeam[gkIdx()].y  // 对方GK的Y
+    var myGKY = myTeam[gkIdx()].y  // 我方GK的Y
+
+    // 对方球门（球场顶部）：球飞过对方GK
+    if (ball.y < opGKY - PLAYER_R) {
+      if (Math.abs(ball.x - goalCX) < goalW / 2) {
+        var gk = opTeam[gkIdx()]
+        var opSaveR = PLAYER_R * (2 + matchDiff * 0.3) // 难度越高对方GK越强
+        if (Math.abs(ball.x - gk.x) > opSaveR) scoreGoal('my')
+        else ballSaved('op')
+      } else ballMissed()
+      return
+    }
+    // 我方球门（球场底部）：球飞过我方GK
+    if (ball.y > myGKY + PLAYER_R) {
+      if (Math.abs(ball.x - goalCX) < goalW / 2) {
+        var gk = myTeam[gkIdx()]
+        var mySaveR = PLAYER_R * (2 + defStat * 0.25) // 防守属性提升扑救范围
+        if (Math.abs(ball.x - gk.x) > mySaveR) scoreGoal('op')
+        else ballSaved('my')
+      } else ballMissed()
+      return
+    }
+    // 球飞出左右边界
+    if (ball.x < PL - 20 || ball.x > PR + 20) { ballMissed(); return }
+    // 射门飞行超时（但速度检测阈值降低，避免误判）
+    if (ball.vx * ball.vx + ball.vy * ball.vy < 0.1) { ballMissed(); return }
+    var flyDecay = Math.pow(0.995, dtF); ball.vx *= flyDecay; ball.vy *= flyDecay
+  } else {
+    // 散球减速
+    ball.x += ball.vx * dtF * 0.9; ball.y += ball.vy * dtF * 0.9
+    var looseDecay = Math.pow(0.94, dtF); ball.vx *= looseDecay; ball.vy *= looseDecay
+    ball.x = clamp(ball.x, PL + 3, PR - 3)
+    ball.y = clamp(ball.y, py(0.02), py(0.98))
+    // 谁近谁拿（GK优先级最低，避免GK出击抢球）
+    var bestD = 999, bestSide = '', bestIdx = -1
+    var gki = gkIdx()
+    for (var mi = 0; mi < myTeam.length; mi++) {
+      var md = dist2(ball, myTeam[mi])
+      if (mi === gki) md += PLAYER_R * 8 // GK加大距离惩罚
+      if (md < bestD) { bestD = md; bestSide = 'my'; bestIdx = mi }
+    }
+    for (var oi = 0; oi < opTeam.length; oi++) {
+      var od = dist2(ball, opTeam[oi])
+      if (oi === gki) od += PLAYER_R * 8
+      if (od < bestD) { bestD = od; bestSide = 'op'; bestIdx = oi }
+    }
+    if (bestD < PLAYER_R * 1.8) {
+      ball.side = bestSide; ball.idx = bestIdx
+      if (bestSide === 'my') setCtrl(bestIdx)
+    }
+  }
+
+  // ==== 抢断判定（GK持球不可被抢断）====
+  if (ball.side === 'my' || ball.side === 'op') {
+    // 守门员持球时跳过抢断（GK在禁区内受保护）
+    if (ball.idx !== gkIdx()) {
+    var carrier = ball.side === 'my' ? myTeam[ball.idx] : opTeam[ball.idx]
+    var defenders = ball.side === 'my' ? opTeam : myTeam
+    var defSideStr = ball.side === 'my' ? 'op' : 'my'
+    for (var di = 0; di < gkIdx(); di++) {
+      if (dist2(carrier, defenders[di]) < PLAYER_R * 2.5) {
+        var prob = ball.side === 'my' ? (0.04 + matchDiff * 0.05) : (0.05 + (1 - matchDiff) * 0.04)
+        if (Math.random() < prob) {
+          ball.side = defSideStr; ball.idx = di
+          if (defSideStr === 'my') setCtrl(di)
+          var txt = defSideStr === 'my' ? '抢断!' : '被抢断!'
+          var clr = defSideStr === 'my' ? '#ffd700' : '#ff6b6b'
+          floats.push({ x: carrier.x, y: carrier.y - 20, text: txt, color: clr, born: Date.now() })
+          audio.playKick(1)
+          break
+        }
+      }
+    }
+    } // end if not GK
+  }
+
+  // ==== AI持球决策（我方队友或对方）====
+  // GK拿到球 → 立刻大脚开出去而不是带球
+  if ((ball.side === 'my' || ball.side === 'op') && ball.idx === gkIdx()) {
+    gkClearBall(ball.side === 'my' ? myTeam : opTeam, ball.side)
+  } else {
+    if (ball.side === 'my' && ball.idx !== ctrlIdx) aiDecision(myTeam, opTeam, 'my', ball.idx, dt)
+    if (ball.side === 'op') aiDecision(opTeam, myTeam, 'op', ball.idx, dt)
+  }
+
+  // ==== 粒子/飘字更新 ====
+  var now = Date.now()
+  for (var pi = particles.length - 1; pi >= 0; pi--) {
+    var p = particles[pi]; if ((now - p.born) > 600) { particles.splice(pi, 1); continue }
+    p.x += p.vx; p.y += p.vy; p.vy += 0.1
+  }
+  for (var fi = floats.length - 1; fi >= 0; fi--) {
+    if ((now - floats[fi].born) > 1500) floats.splice(fi, 1)
+  }
+}
+
+function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v }
+function dist2(a, b) { return Math.sqrt((a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y)) }
+
+// ==== 球队AI移动（真实足球跑位）====
+function updateTeamAI(team, enemy, side, dt, spdMod, defMod) {
+  var dtF = dt / 16
+  var hasBall = ball.side === side
+  var ballCarrierIdx = hasBall ? ball.idx : -1
+  var t = Date.now() / 1000
+  var atkDir = side === 'my' ? -1 : 1 // 进攻方向（我方向上-1，对方向下+1）
+
+  // ---- 第一步：计算防线高度（后卫协调）----
+  var fm = getFormation()
+  var defLineY = 0, defCount = 0
+  for (var di = 0; di < fm.length; di++) {
+    var df = fm[di]
+    if (df.role === 'CB' || df.role === 'LB' || df.role === 'RB') {
+      var defHome = side === 'my' ? py(df.hy) : py(1 - df.hy)
+      defLineY += defHome; defCount++
+    }
+  }
+  if (defCount === 0) defLineY = side === 'my' ? py(0.75) : py(0.25)
+  else defLineY = defLineY / defCount
+  // 防线整体根据球位置前压或后缩
+  var ballPressure = (ball.y - py(0.5)) / PH // -0.5到+0.5
+  var lineShift = ballPressure * PH * 0.15 * (side === 'my' ? 1 : -1)
+  defLineY += lineShift
+  if (hasBall) defLineY += atkDir * PH * -0.06 // 有球时防线前压
+
+  for (var i = 0; i < team.length; i++) {
+    if (side === 'my' && i === ctrlIdx) continue
+    if (i === ballCarrierIdx) continue
+
+    var p = team[i], f = fm[i]
+    var homeX, homeY
+    if (side === 'my') { homeX = px(f.hx); homeY = py(f.hy) }
+    else { homeX = px(f.hx); homeY = py(1 - f.hy) }
+
+    var targetX = homeX, targetY = homeY
+    var isSprintng = false // 冲刺标记
+
+    // ---- 各位置独立行为 ----
+    if (f.role === 'GK') {
+      // 守门员：锁定在门线上，只做横向移动
+      targetY = homeY  // 始终站在门线位置，不出击
+      var threat = side === 'my' ? (ball.y > py(0.55)) : (ball.y < py(0.45))
+      if (ball.side === 'fly') {
+        var toGoal = side === 'my' ? ball.vy > 0 : ball.vy < 0
+        if (toGoal) {
+          // 射门时全力扑球
+          targetX = ball.x
+          isSprintng = true
+        } else {
+          targetX = homeX + (ball.x - homeX) * 0.3
+        }
+      } else if (threat) {
+        // 球在己方半场时跟踪球的横向
+        targetX = homeX + (ball.x - homeX) * 0.45
+      } else {
+        // 球在对方半场时缓慢回中
+        targetX = homeX + (ball.x - homeX) * 0.1
+      }
+      // 限制GK横向范围（不超出球门宽度）
+      var goalHalfW = W * 0.22
+      targetX = clamp(targetX, px(0.5) - goalHalfW, px(0.5) + goalHalfW)
+
+      // GK不参与排斥力计算，直接移动后跳过后续逻辑
+      var gkDx = targetX - p.x
+      var gkSpd = (isSprintng ? 3.5 : 1.5) * (1 + spdMod * 0.3) * dtF
+      if (Math.abs(gkDx) > 1) p.x += (gkDx > 0 ? 1 : -1) * Math.min(gkSpd, Math.abs(gkDx))
+      p.y = homeY  // 强制锁定Y
+      continue     // 跳过后续排斥力和通用移动逻辑
+
+    } else if (f.role === 'ST') {
+      if (hasBall) {
+        // 有球：做反跑拉开空间 — 先横移再前插
+        var runPhase = (t * 0.8 + i) % 4
+        if (runPhase < 1.5) {
+          targetX = homeX + (runPhase < 0.75 ? 1 : -1) * (PR - PL) * 0.2
+          targetY = homeY
+        } else {
+          targetX = homeX + Math.sin(t * 0.5 + i) * (PR - PL) * 0.1
+          targetY = homeY + atkDir * PH * -0.18
+          isSprintng = true
+        }
+      } else {
+        // 没球：追对方持球者抢球
+        var oppBallSide = side === 'my' ? 'op' : 'my'
+        if (ball.side === oppBallSide && ball.idx >= 0) {
+          var ballCarrier = side === 'my' ? opTeam[ball.idx] : myTeam[ball.idx]
+          targetX = ballCarrier.x
+          targetY = ballCarrier.y
+          isSprintng = true
+        } else if (ball.side === '' || ball.side === 'fly') {
+          // 散球/飞行中：追球
+          targetX = ball.x
+          targetY = ball.y
+          isSprintng = true
+        } else {
+          targetY = py(0.5)
+        }
+      }
+
+    } else if (f.role === 'LW' || f.role === 'RW') {
+      var isLeft = f.role === 'LW'
+      var wingBase = isLeft ? PL + (PR-PL) * 0.06 : PR - (PR-PL) * 0.06
+      if (hasBall) {
+        // 边锋：沿边线直线冲刺 + 内切跑
+        var runPhase = (t * 0.6 + i * 1.7) % 5
+        if (runPhase < 2.5) {
+          // 贴边前插
+          targetX = wingBase
+          targetY = homeY + atkDir * PH * -(0.05 + runPhase * 0.05)
+          isSprintng = runPhase > 1
+        } else {
+          // 内切到中路
+          targetX = px(isLeft ? 0.35 : 0.65)
+          targetY = homeY + atkDir * PH * -0.1
+        }
+      } else {
+        targetX = wingBase
+        targetY = homeY + atkDir * PH * 0.05
+      }
+
+    } else if (f.role === 'CM') {
+      // 中场：保持三角传球结构，跟随球移动
+      var pullStr = hasBall ? 0.3 : 0.2
+      targetX = homeX + (ball.x - px(0.5)) * pullStr
+      targetY = homeY + (ball.y - py(0.5)) * pullStr * 0.4
+      if (hasBall) targetY += atkDir * PH * -0.05
+      // 避免两个CM重叠：彼此排斥
+      var otherCM = i === 3 ? 4 : 3
+      if (otherCM < team.length) {
+        var cmDist = dist2(p, team[otherCM])
+        if (cmDist < (PR-PL) * 0.15) {
+          targetX += (p.x - team[otherCM].x) * 0.1
+        }
+      }
+
+    } else if (f.role === 'CDM') {
+      // 后腰：球盾位置，在球和球门之间
+      var shieldX = (ball.x + px(0.5)) * 0.5
+      var shieldY = (ball.y + homeY) * 0.5
+      targetX = shieldX
+      targetY = clamp(shieldY, homeY + atkDir * PH * -0.08, homeY + atkDir * PH * 0.08)
+      if (!hasBall) {
+        // 防守时贴近对方持球人
+        var oppSide = side === 'my' ? 'op' : 'my'
+        if (ball.side === oppSide && ball.idx >= 0) {
+          var bc = side === 'my' ? enemy[ball.idx] : enemy[ball.idx]
+          targetX = homeX + (bc.x - homeX) * 0.35
+          targetY = homeY + (bc.y - homeY) * 0.25
+        }
+      }
+
+    } else if (f.role === 'CB') {
+      // 中后卫：跟随防线高度，盯人
+      targetY = defLineY + (f.hy > 0.5 ? 0 : 0) // 保持在防线上
+      targetX = homeX + (ball.x - px(0.5)) * 0.12
+      if (!hasBall) {
+        // 盯最近的对方前锋
+        var markTarget = null, markDist = PH * 0.4
+        for (var mi = 0; mi < Math.min(3, enemy.length); mi++) {
+          var md = dist2(p, enemy[mi])
+          if (md < markDist) { markDist = md; markTarget = enemy[mi] }
+        }
+        if (markTarget) {
+          targetX += (markTarget.x - targetX) * 0.3
+          targetY += (markTarget.y - targetY) * 0.2
+        }
+      }
+
+    } else if (f.role === 'LB' || f.role === 'RB') {
+      // 边后卫：跟随防线高度，进攻时套边
+      targetY = defLineY
+      if (hasBall) {
+        // 套边跑位：有节奏地前插
+        var overlapPhase = (t * 0.5 + i * 2.1) % 6
+        if (overlapPhase > 3.5 && overlapPhase < 5.5) {
+          var wingEdge = f.role === 'LB' ? PL + (PR-PL) * 0.05 : PR - (PR-PL) * 0.05
+          targetX = wingEdge
+          targetY = defLineY + atkDir * PH * -0.2
+          isSprintng = true
+        }
+      } else {
+        // 防守：盯边路对手
+        var edgeThresh = f.role === 'LB' ? 0.35 : 0.65
+        for (var ei = 0; ei < gkIdx(); ei++) {
+          var eFrac = (enemy[ei].x - PL) / (PR - PL)
+          var isMyWing = (f.role === 'LB' && eFrac < edgeThresh) || (f.role === 'RB' && eFrac > edgeThresh)
+          if (isMyWing && dist2(p, enemy[ei]) < PH * 0.35) {
+            targetX += (enemy[ei].x - targetX) * 0.25
+            targetY += (enemy[ei].y - targetY) * 0.15
+            break
+          }
+        }
+      }
+    }
+
+    // ---- 第二步：球员排斥（防止扎堆，含对手排斥）----
+    var minSep = PLAYER_R * 5 // 同队最小间距
+    var minSepEnemy = PLAYER_R * 2.5 // 对手最小间距
+    // 同队排斥
+    for (var ri = 0; ri < team.length; ri++) {
+      if (ri === i) continue
+      var rd = dist2(p, team[ri])
+      if (rd < minSep && rd > 0.5) {
+        var pushStr = (minSep - rd) / minSep * 3.0
+        targetX += (p.x - team[ri].x) / rd * pushStr
+        targetY += (p.y - team[ri].y) / rd * pushStr
+      }
+    }
+    // 对手排斥（避免完全重叠）
+    for (var ei = 0; ei < enemy.length; ei++) {
+      var ed = dist2(p, enemy[ei])
+      if (ed < minSepEnemy && ed > 0.5) {
+        var pushE = (minSepEnemy - ed) / minSepEnemy * 1.5
+        targetX += (p.x - enemy[ei].x) / ed * pushE
+        targetY += (p.y - enemy[ei].y) / ed * pushE
+      }
+    }
+
+    // ---- 第三步：移动（区分慢跑/冲刺）----
+    targetX = clamp(targetX, PL + PLAYER_R, PR - PLAYER_R)
+    targetY = clamp(targetY, py(0.02), py(0.98))
+
+    var dx = targetX - p.x, dy = targetY - p.y
+    var dist = Math.sqrt(dx * dx + dy * dy)
+    // 慢跑1.2，冲刺2.5，距离远时加速
+    var baseSpd = isSprintng ? 1.6 : 0.8
+    var personalSpeed = (baseSpd + spdMod * 0.2) * dtF
+    if (dist > PLAYER_R * 8) personalSpeed *= 1.3
+    if (dist > 2) {
+      p.x += (dx / dist) * Math.min(personalSpeed, dist)
+      p.y += (dy / dist) * Math.min(personalSpeed, dist)
+    }
+  }
+}
+
+// ==== AI持球决策（传球/射门/带球）====
+// 每方独立冷却
+var myAICooldown = 0, opAICooldown = 0
+function aiDecision(team, enemy, side, idx, dt) {
+  // 各方独立冷却
+  if (side === 'my') { if (myAICooldown > 0) { myAICooldown -= dt; return } }
+  else { if (opAICooldown > 0) { opAICooldown -= dt; return } }
+
+  var p = team[idx], f = getFormation()[idx]
+  var dtF = dt / 16
+
+  // 带球推进
+  var advDir = side === 'my' ? -1 : 1
+  var advSpeed = (1.0 + (side === 'op' ? matchDiff * 0.8 : 0.5)) * dtF
+
+  // 向球门方向推进，靠近边线时往中路靠
+  var centerPull = (px(0.5) - p.x) * 0.008 * dtF
+  p.x += Math.sin(Date.now() / 500 + idx * 3.7) * 0.5 * dtF + centerPull
+  p.y += advDir * advSpeed
+
+  // 被对手堵住时尝试横向绕开
+  for (var bi = 0; bi < enemy.length; bi++) {
+    var bd = dist2(p, enemy[bi])
+    if (bd < PLAYER_R * 3.5 && bd > 0.5) {
+      p.x += (p.x - enemy[bi].x) / bd * 1.5 * dtF
+      // 减少前进速度避免硬冲
+      p.y -= advDir * advSpeed * 0.4
+    }
+  }
+
+  // 限制带球不能冲过对方GK区域
+  var maxAdvance = side === 'my' ? py(0.12) : py(0.88)
+  p.x = clamp(p.x, PL + PLAYER_R * 2, PR - PLAYER_R * 2)
+  p.y = side === 'my' ? clamp(p.y, maxAdvance, py(0.95)) : clamp(p.y, py(0.05), maxAdvance)
+
+  // 射门判定
+  var inShootZone = side === 'my' ? (p.y < py(0.35)) : (p.y > py(0.65))
+  var nearGoal = side === 'my' ? (p.y < py(0.22)) : (p.y > py(0.78))
+  var veryNearGoal = side === 'my' ? (p.y < py(0.15)) : (p.y > py(0.85))
+  if (veryNearGoal) {
+    // 非常接近球门 → 立刻射门，不再犹豫
+    doShoot(team, side, idx)
+    if (side === 'my') myAICooldown = 1000; else opAICooldown = 1000
+    return
+  } else if (inShootZone) {
+    var shootProb = nearGoal ? 0.08 : 0.03
+    if (side === 'op') shootProb *= (0.8 + matchDiff * 0.5)
+    if (Math.random() < shootProb) {
+      doShoot(team, side, idx)
+      if (side === 'my') myAICooldown = 1200; else opAICooldown = 1200
+      return
+    }
+  }
+
+  // 传球判定：概率更高，让比赛有更多传球配合
+  var passProb = 0.02 + (side === 'op' ? matchDiff * 0.015 : 0.01)
+  if (Math.random() < passProb) {
+    var bestTarget = -1, bestScore = -999
+    for (var ti = 0; ti < gkIdx(); ti++) {
+      if (ti === idx) continue
+      var tm = team[ti]
+      var ahead = side === 'my' ? (p.y - tm.y) : (tm.y - p.y)
+      var lateral = Math.abs(tm.x - p.x)
+      var sc = ahead * 0.5 + lateral * 0.3 + Math.random() * 25
+      var blocked = false
+      for (var ei = 0; ei < gkIdx(); ei++) {
+        if (isOnPath(p, tm, enemy[ei], PLAYER_R * 2.5)) { blocked = true; break }
+      }
+      if (!blocked && sc > bestScore) { bestScore = sc; bestTarget = ti }
+    }
+    if (bestTarget >= 0) {
+      doPass(team, side, idx, bestTarget)
+      if (side === 'my') myAICooldown = 600; else opAICooldown = 600
+      return
+    }
+  }
+}
+
+function isOnPath(from, to, point, threshold) {
+  var dx = to.x - from.x, dy = to.y - from.y
+  var len = Math.sqrt(dx * dx + dy * dy)
+  if (len < 1) return false
+  var t = ((point.x - from.x) * dx + (point.y - from.y) * dy) / (len * len)
+  if (t < 0.1 || t > 0.9) return false
+  var px2 = from.x + t * dx, py2 = from.y + t * dy
+  return dist2(point, { x: px2, y: py2 }) < threshold
+}
+
+// GK拿到球后立刻大脚开出
+function gkClearBall(team, side) {
+  lastKickSide = side
+  var gk = team[gkIdx()]
+  var atkDir = side === 'my' ? -1 : 1
+  // 找最近的非GK队友传球
+  var bestIdx = 0, bestDist = 999
+  for (var i = 0; i < gkIdx(); i++) {
+    var d = dist2(gk, team[i])
+    if (d < bestDist) { bestDist = d; bestIdx = i }
+  }
+  // 向队友方向大脚开球
+  var target = team[bestIdx]
+  var dx = target.x - gk.x, dy = target.y - gk.y
+  var dist = Math.sqrt(dx * dx + dy * dy)
+  if (dist < 1) { dy = atkDir * 100; dist = 100 }
+  var clearSpeed = 5.0
+  ball.vx = (dx / dist) * clearSpeed
+  ball.vy = (dy / dist) * clearSpeed
+  ball.x = gk.x; ball.y = gk.y + atkDir * PLAYER_R
+  ball.side = 'fly'; ball.idx = -1; ball.flyTarget = bestIdx; ball.flySide = side
+  audio.playKick(3)
+}
+
+function doPass(team, side, fromIdx, toIdx, power) {
+  lastKickSide = side
+  var from = team[fromIdx], to = team[toIdx]
+  var dx = to.x - from.x, dy = to.y - from.y
+  var dist = Math.sqrt(dx * dx + dy * dy)
+  var passSpeed = (power || 1.0) * 2.5 // 力度 × 基础速度
+  ball.vx = (dx / dist) * passSpeed; ball.vy = (dy / dist) * passSpeed
+  ball.x = from.x; ball.y = from.y
+  ball.side = 'fly'; ball.idx = -1; ball.flyTarget = toIdx; ball.flySide = side
+  audio.playKick(2)
+}
+
+function doShoot(team, side, idx) {
+  lastKickSide = side
+  var p = team[idx]
+  // 难度越高射门越准
+  var spread = side === 'op' ? W * (0.35 - matchDiff * 0.1) : W * 0.3
+  var targetX = W / 2 + (Math.random() - 0.5) * spread
+  var targetY = side === 'my' ? py(0.0) : py(1.0)
+  var dx = targetX - p.x, dy = targetY - p.y
+  var dist = Math.sqrt(dx * dx + dy * dy)
+  var shootSpeed = 2.8 + (side === 'op' ? matchDiff * 1.0 : getStatValue('atk') * 0.3)
+  ball.vx = (dx / dist) * shootSpeed; ball.vy = (dy / dist) * shootSpeed
+  ball.x = p.x; ball.y = p.y
+  ball.side = 'fly'; ball.idx = -1; ball.flyTarget = -1; ball.flySide = ''
+  audio.playKick(4)
+  for (var i = 0; i < 4; i++) {
+    particles.push({ x: p.x, y: p.y, vx: (Math.random()-0.5)*3, vy: (Math.random()-0.5)*3, color:'#ffd700', born: Date.now(), size: 2+Math.random()*2 })
+  }
+}
+
+function myShoot(svx, svy, power) {
+  var p = myTeam[ctrlIdx]
+  if (ball.side !== 'my' || ball.idx !== ctrlIdx) return
+  lastKickSide = 'my'
+  var atkStat = getStatValue('atk')
+  var pw = power || 1.0
+  var shootSpeed = (2.5 + atkStat * 0.4) * pw // 力度影响球速
+  var dist = Math.sqrt(svx * svx + svy * svy)
+  if (dist < 0.1) return
+  ball.vx = (svx / dist) * shootSpeed; ball.vy = (svy / dist) * shootSpeed
+  ball.x = p.x; ball.y = p.y - PLAYER_R - 3
+  ball.side = 'fly'; ball.idx = -1; ball.flyTarget = -1; ball.flySide = ''
+  audio.playKick(4)
+  for (var i = 0; i < 5; i++) {
+    particles.push({ x: ball.x, y: ball.y, vx: (Math.random()-0.5)*3, vy: (Math.random()-0.5)*3, color:'#ffd700', born: Date.now(), size: 2+Math.random()*2 })
+  }
+}
+
+function myPass(svx, svy, power) {
+  var p = myTeam[ctrlIdx]
+  if (ball.side !== 'my' || ball.idx !== ctrlIdx) return
+  lastKickSide = 'my'
+  var pw = power || 1.0
+  // 找滑动方向上最近的队友
+  var bestIdx = -1, bestAngleDiff = 999
+  var swipeAngle = Math.atan2(svy, svx)
+  for (var ti = 0; ti < gkIdx(); ti++) {
+    if (ti === ctrlIdx) continue
+    var t = myTeam[ti]
+    var a = Math.atan2(t.y - p.y, t.x - p.x)
+    var diff = Math.abs(a - swipeAngle)
+    if (diff > Math.PI) diff = Math.PI * 2 - diff
+    if (diff < Math.PI * 0.4 && diff < bestAngleDiff) { // 72度扇形内
+      bestAngleDiff = diff; bestIdx = ti
+    }
+  }
+  if (bestIdx >= 0) {
+    doPass(myTeam, 'my', ctrlIdx, bestIdx, pw)
+    floats.push({ x: p.x, y: p.y - 20, text:'传球!', color:'#4CAF50', born: Date.now() })
+  }
+}
+
+var goalFreezeUntil = 0 // 进球后冻结时间，期间不更新比赛
+
+function scoreGoal(side) {
+  if (side === 'my') { myGoals++; audio.playGoal(); audio.playCheer() }
+  else { opGoals++; audio.playMiss() }
+  // 进球后冻结比赛1.5秒（球和球员都不动）
+  goalFreezeUntil = Date.now() + 1500
+  ball.side = 'freeze'; ball.idx = -1; ball.x = px(0.5); ball.y = py(0.5); ball.vx = 0; ball.vy = 0
+  goalFlashTime = Date.now(); goalFlashSide = side
+  goalEvents.push({ time: matchDuration - matchTime, side: side })
+  floats.push({ x: W/2, y: py(0.4), text: side === 'my' ? '⚽ GOAL!' : '失球...', color: side === 'my' ? '#ffd700' : '#ff6b6b', born: Date.now() })
+  try { wx.vibrateShort({ type: side === 'my' ? 'heavy' : 'medium' }) } catch(e) {}
+  setTimeout(function() {
+    if (scene === 'match') {
+      initMatchPlayers()
+      ball.side = side === 'my' ? 'op' : 'my'; ball.idx = 0
+      if (ball.side === 'my') ctrlIdx = 0
+      goalFreezeUntil = 0
+    }
+  }, 1500)
+}
+
+function ballSaved(side) {
+  var gk = side === 'op' ? opTeam[gkIdx()] : myTeam[gkIdx()]
+  ball.side = ''; ball.idx = -1
+  ball.x = gk.x; ball.y = gk.y + (side === 'op' ? 20 : -20)
+  ball.vx = (Math.random() - 0.5) * 3; ball.vy = (side === 'op' ? 2 : -2)
+  floats.push({ x: gk.x, y: gk.y - 25, text: '扑救!', color: '#4CAF50', born: Date.now() })
+}
+
+// lastKickSide: 记录最后是哪方踢的球，出界时交给对方
+var lastKickSide = 'my'
+
+function ballMissed() {
+  // 出界 → 球权交给对方（掷界外球/球门球）
+  var giveTo = lastKickSide === 'my' ? 'op' : 'my'
+  // 球放到出界位置附近，交给对方最近的球员
+  var bx = clamp(ball.x, PL + 20, PR - 20)
+  var by = clamp(ball.y, py(0.1), py(0.9))
+  var team = giveTo === 'my' ? myTeam : opTeam
+  var bestIdx = 0, bestDist = 999
+  for (var i = 0; i < gkIdx(); i++) {
+    var d = dist2({x:bx, y:by}, team[i])
+    if (d < bestDist) { bestDist = d; bestIdx = i }
+  }
+  ball.side = giveTo; ball.idx = bestIdx
+  ball.x = bx; ball.y = by; ball.vx = 0; ball.vy = 0
+  if (giveTo === 'my') setCtrl(bestIdx)
+  floats.push({ x: bx, y: by - 20, text: '出界', color: 'rgba(255,255,255,0.5)', born: Date.now() })
+}
+
+function endMatch() {
+  audio.stopBGM(); audio.playWhistle()
+  goalFreezeUntil = 0
+  try { wx.vibrateShort({ type: 'heavy' }) } catch(e) {}
+
+  // 保存比赛结果
+  var result = { myGoals: myGoals, opGoals: opGoals }
+  var isWin = myGoals > opGoals
+
+  // 奖励金币
+  var reward = isWin ? (myGoals * 5 + 15) : 5
+  D.coins += reward; saveField('coins', D.coins)
+
+  // 日常任务
+  if (!D.dailyDone.match1) { D.dailyDone.match1 = true; D.coins += 15; saveField('coins', D.coins) }
+  if (isWin && !D.dailyDone.win1) { D.dailyDone.win1 = true; D.coins += 25; saveField('coins', D.coins) }
+  saveField('dailyDone_' + todayStr(), D.dailyDone)
+
+  if (matchMode === 'league') {
+    // 联赛：赢或平才晋级
+    if (myGoals >= opGoals) { D.leagueWins.push(result); saveField('leagueWins', D.leagueWins) }
+  } else {
+    if (isWin) { D.wcWins.push(result); saveField('wcWins', D.wcWins) }
+  }
+
+  // 标记已玩过
+  if (!hasPlayedBefore) { hasPlayedBefore = true; wx.setStorageSync('hasPlayed', true) }
+
+  // 排行榜已移除
+  scene = 'matchResult'
+}
+
+// ---- 比赛渲染（11v11）----
+function drawMatch() {
+  render.drawPitchBG(ctx, W, H, { top: PT, bottom: PB, left: PL, right: PR })
+  var now = Date.now()
+  var myT = getMyTeam()
+  // 对方球衣颜色
+  var opT = opponentTeam || {}
+  if (!opT.color) opT = { city:'对手', color:'#FF4444', away:'#EEEEEE', emoji:'👕' }
+  var myC = (myT.color && myT.color[0] === '#') ? myT.color : '#4CAF50'
+  var opC = (opT.color && opT.color[0] === '#') ? opT.color : '#FF4444'
+  // 颜色冲突检测
+  var cr = function(c) { return [parseInt(c.slice(1,3),16)||0, parseInt(c.slice(3,5),16)||0, parseInt(c.slice(5,7),16)||0] }
+  var mc = cr(myC), oc = cr(opC)
+  var colorDiff = Math.abs(mc[0]-oc[0]) + Math.abs(mc[1]-oc[1]) + Math.abs(mc[2]-oc[2])
+  var opColor = colorDiff < 150 ? ((opT.away && opT.away[0] === '#') ? opT.away : '#EEEEEE') : opC
+  var goalW = W * 0.42, goalH = 14
+  render.drawGoal(ctx, W/2-goalW/2, PT-2, goalW, goalH, false)
+  render.drawGoal(ctx, W/2-goalW/2, PB-goalH+2, goalW, goalH, true)
+
+  if (goalFlashTime > 0 && (now - goalFlashTime) < 800) {
+    var fa = 0.12*(1-(now-goalFlashTime)/800)
+    ctx.fillStyle = goalFlashSide==='my' ? 'rgba(255,215,0,'+fa+')' : 'rgba(255,50,50,'+fa+')'
+    ctx.fillRect(0,0,W,H)
+  }
+
+  // 所有实体按Y坐标排序渲染（正确的前后遮挡关系）
+  var entities = []
+  for (var oi=0;oi<opTeam.length;oi++) {
+    entities.push({type:'player',x:opTeam[oi].x,y:opTeam[oi].y,color:opColor,num:opTeam[oi].num,hl:false,hb:ball.side==='op'&&ball.idx===oi,gk:oi===gkIdx()})
+  }
+  for (var mi=0;mi<myTeam.length;mi++) {
+    entities.push({type:'player',x:myTeam[mi].x,y:myTeam[mi].y,color:myC,num:myTeam[mi].num,hl:mi===ctrlIdx&&mi<gkIdx(),hb:ball.side==='my'&&ball.idx===mi,gk:mi===gkIdx()})
+  }
+  if (ball.side !== 'freeze') {
+    entities.push({type:'ball',x:ball.x,y:ball.y})
+  }
+  // 按Y排序（Y小的先画，Y大的后画覆盖在上面）
+  entities.sort(function(a,b){return a.y - b.y})
+  for (var ei=0;ei<entities.length;ei++) {
+    var e = entities[ei]
+    if (e.type === 'ball') {
+      var isFlying = ball.side === 'fly'
+      render.drawBall(ctx, e.x, e.y, PLAYER_R * 1.2, isFlying)
+      if (isFlying && ball.flyTarget < 0) {
+        for (var ti=1;ti<=3;ti++) {
+          ctx.beginPath();ctx.arc(e.x-ball.vx*ti*1.5,e.y-ball.vy*ti*1.5,PLAYER_R*0.18*(1-ti/4),0,Math.PI*2)
+          ctx.fillStyle='rgba(255,200,50,'+(0.2*(1-ti/4))+')';ctx.fill()
+        }
+      }
+    } else {
+      try { drawMiniPlayer(ctx,e.x,e.y,PLAYER_R,e.color,e.num,e.hl,e.hb,e.gk) }
+      catch(err) { ctx.fillStyle=e.color;ctx.beginPath();ctx.arc(e.x,e.y,PLAYER_R,0,Math.PI*2);ctx.fill() }
+    }
+  }
+  // 控制球员高亮（三角箭头，比圆环更明显）
+  var cp=myTeam[ctrlIdx]
+  ctx.beginPath()
+  ctx.moveTo(cp.x, cp.y - PLAYER_R - 8)
+  ctx.lineTo(cp.x - 5, cp.y - PLAYER_R - 15)
+  ctx.lineTo(cp.x + 5, cp.y - PLAYER_R - 15)
+  ctx.closePath()
+  ctx.fillStyle = '#ffd700'; ctx.fill()
+
+  // 瞄准线
+  if (touchDown&&ball.side==='my'&&ball.idx===ctrlIdx) {
+    var sdx=touchX-touchStartX,sdy=touchY-touchStartY,sD=Math.sqrt(sdx*sdx+sdy*sdy)
+    if (sD>10) {
+      var aL=Math.min(sD*1.2,PH*0.25)
+      var ax=cp.x+(sdx/sD)*aL*0.4,ay=cp.y+(sdy/sD)*aL
+      ctx.beginPath();ctx.moveTo(cp.x,cp.y-PLAYER_R);ctx.lineTo(ax,ay)
+      ctx.strokeStyle=sdy<-5?'rgba(255,215,0,0.5)':'rgba(100,255,100,0.4)';ctx.lineWidth=2.5;ctx.stroke()
+      ctx.beginPath();ctx.arc(ax,ay,4,0,Math.PI*2)
+      ctx.fillStyle=sdy<-5?'rgba(255,215,0,0.6)':'rgba(100,255,100,0.5)';ctx.fill()
+      if (sD>18&&sdy<-10) render.drawText(ctx,'松手射门!',cp.x,cp.y-PLAYER_R*3.5,'bold '+(W*0.025)+'px sans-serif','#ffd700')
+      else if (sD>18) render.drawText(ctx,'松手传球',cp.x,cp.y-PLAYER_R*3.5,(W*0.022)+'px sans-serif','rgba(100,255,100,0.5)')
+    }
+  }
+  // 粒子
+  for (var pi=0;pi<particles.length;pi++) {
+    var pp=particles[pi];var pA=(now-pp.born)/600;if(pA>1)continue
+    ctx.globalAlpha=1-pA;ctx.beginPath();ctx.arc(pp.x,pp.y,pp.size*(1-pA*0.5),0,Math.PI*2)
+    ctx.fillStyle=pp.color;ctx.fill();ctx.globalAlpha=1
+  }
+  // 飘字
+  for (var fi=0;fi<floats.length;fi++) {
+    var ff=floats[fi];var fA=(now-ff.born)/1500;if(fA>1)continue
+    ctx.globalAlpha=fA<0.7?1:(1-(fA-0.7)/0.3)
+    render.drawStrokeText(ctx,ff.text,ff.x,ff.y-fA*50,'bold '+(W*0.05)+'px sans-serif',ff.color,'rgba(0,0,0,0.5)',2)
+    ctx.globalAlpha=1
+  }
+  drawMatchHUD()
+  // 倒计时
+  if (matchCountdown>0) {
+    ctx.fillStyle='rgba(0,0,0,0.5)';ctx.fillRect(0,PT,W,PH)
+    var cdY=py(0.45),cdS=1+Math.sin(now/150)*0.1
+    ctx.save();ctx.translate(W/2,cdY);ctx.scale(cdS,cdS)
+    render.drawStrokeText(ctx,''+matchCountdown,0,0,'bold '+(W*0.18)+'px sans-serif','#ffd700','rgba(0,0,0,0.6)',5)
+    ctx.restore()
+    render.drawText(ctx,'准备开球...',W/2,cdY+W*0.1,(W*0.035)+'px sans-serif','rgba(255,255,255,0.5)')
+  }
+  // 新手引导
+  if (guideStep>0&&matchCountdown<=0) {
+    guideTimer+=16;var gA=Math.min(guideTimer/500,0.6)
+    if (guideStep===1) {
+      ctx.fillStyle='rgba(0,0,0,'+gA*0.5+')';ctx.fillRect(0,py(0.45),W,PH*0.55)
+      render.drawStrokeText(ctx,'📱 操控说明',W/2,py(0.52),'bold '+(W*0.05)+'px sans-serif','#fff','rgba(0,0,0,0.6)',3)
+      render.drawText(ctx,'拖动 → 移动球员',W/2,py(0.6),(W*0.03)+'px sans-serif','rgba(255,255,255,0.7)')
+      render.drawText(ctx,'↑ 快速上滑 → 射门',W/2,py(0.66),(W*0.03)+'px sans-serif','#ffd700')
+      render.drawText(ctx,'← → 横向滑动 → 传球',W/2,py(0.72),(W*0.03)+'px sans-serif','#4CAF50')
+      render.drawText(ctx,'靠近对手可抢断',W/2,py(0.78),(W*0.03)+'px sans-serif','rgba(255,255,255,0.5)')
+      render.drawText(ctx,'点击继续',W/2,py(0.9),(W*0.025)+'px sans-serif','rgba(255,255,255,0.3)')
+    } else if (guideStep===2) {
+      ctx.fillStyle='rgba(0,0,0,'+gA*0.5+')';ctx.fillRect(0,PT,W,PH*0.5)
+      render.drawStrokeText(ctx,'⚽ 11v11 即时对抗',W/2,py(0.12),'bold '+(W*0.045)+'px sans-serif','#ffd700','rgba(0,0,0,0.6)',3)
+      render.drawText(ctx,'队友自动跑位+传球',W/2,py(0.2),(W*0.028)+'px sans-serif','rgba(255,255,255,0.7)')
+      render.drawText(ctx,'抢到球后自动切换控制',W/2,py(0.26),(W*0.028)+'px sans-serif','rgba(255,255,255,0.5)')
+      render.drawText(ctx,'点击开始比赛',W/2,py(0.9),(W*0.025)+'px sans-serif','rgba(255,255,255,0.3)')
+    }
+  }
+}
+
+// 安全取色（避免undefined/无效色导致canvas崩溃）
+function safeColor(c, fallback) {
+  if (c && typeof c === 'string' && c[0] === '#' && c.length >= 7) return c
+  return fallback || '#888888'
+}
+function safeLighten(c, amt) {
+  c = safeColor(c, '#888888')
+  var r = Math.min(255, Math.max(0, (parseInt(c.slice(1,3),16)||0) + amt))
+  var g = Math.min(255, Math.max(0, (parseInt(c.slice(3,5),16)||0) + amt))
+  var b = Math.min(255, Math.max(0, (parseInt(c.slice(5,7),16)||0) + amt))
+  return '#' + ((1<<24)+(r<<16)+(g<<8)+b).toString(16).slice(1)
+}
+
+// 守门员球衣颜色
+function getGKColor(teamColor) {
+  var gkColors = ['#2ECC40','#FFDC00','#FF851B','#AAAAAA','#01FF70']
+  var tc = safeColor(teamColor)
+  var tr = parseInt(tc.slice(1,3),16), tg = parseInt(tc.slice(3,5),16)
+  var best = gkColors[0], bestDiff = 0
+  for (var i = 0; i < gkColors.length; i++) {
+    var diff = Math.abs(tr - parseInt(gkColors[i].slice(1,3),16)) + Math.abs(tg - parseInt(gkColors[i].slice(3,5),16))
+    if (diff > bestDiff) { bestDiff = diff; best = gkColors[i] }
+  }
+  return best
+}
+
+// 穿球衣的小人
+function drawMiniPlayer(ctx, x, y, r, color, num, highlighted, hasBall, isGK) {
+  var s = r
+  // GK球衣：11v11用对比色，2v2用同队色变体（看起来是一个队）
+  var jc
+  if (!isGK) { jc = safeColor(color) }
+  else if (matchTeamSize <= 2) { jc = safeLighten(safeColor(color), 50) } // 同色浅色版
+  else { jc = safeColor(getGKColor(color)) }
+
+  // 阴影
+  ctx.beginPath(); ctx.arc(x, y+s, s*0.4, 0, Math.PI*2)
+  ctx.fillStyle = 'rgba(0,0,0,0.2)'; ctx.fill()
+
+  // 腿+鞋
+  ctx.strokeStyle = '#dbb896'; ctx.lineWidth = s*0.16; ctx.lineCap = 'round'
+  ctx.beginPath(); ctx.moveTo(x-s*0.2, y+s*0.4); ctx.lineTo(x-s*0.18, y+s*0.85); ctx.stroke()
+  ctx.beginPath(); ctx.moveTo(x+s*0.2, y+s*0.4); ctx.lineTo(x+s*0.18, y+s*0.85); ctx.stroke()
+  ctx.fillStyle = '#222'
+  ctx.beginPath(); ctx.arc(x-s*0.18, y+s*0.9, s*0.1, 0, Math.PI*2); ctx.fill()
+  ctx.beginPath(); ctx.arc(x+s*0.18, y+s*0.9, s*0.1, 0, Math.PI*2); ctx.fill()
+
+  // 短裤
+  ctx.fillStyle = isGK ? safeLighten(jc, -40) : '#222'
+  ctx.beginPath()
+  ctx.moveTo(x-s*0.35, y+s*0.25); ctx.lineTo(x-s*0.25, y+s*0.5)
+  ctx.lineTo(x+s*0.25, y+s*0.5); ctx.lineTo(x+s*0.35, y+s*0.25)
+  ctx.closePath(); ctx.fill()
+
+  // 球衣（纯色填充，避免渐变兼容性问题）
+  ctx.beginPath()
+  ctx.moveTo(x-s*0.45, y-s*0.15)
+  ctx.quadraticCurveTo(x-s*0.5, y+s*0.3, x-s*0.3, y+s*0.35)
+  ctx.lineTo(x+s*0.3, y+s*0.35)
+  ctx.quadraticCurveTo(x+s*0.5, y+s*0.3, x+s*0.45, y-s*0.15)
+  ctx.closePath()
+  ctx.fillStyle = jc; ctx.fill()
+  // 球衣高光（左上角亮）
+  ctx.fillStyle = 'rgba(255,255,255,0.15)'
+  ctx.beginPath()
+  ctx.moveTo(x-s*0.4, y-s*0.1)
+  ctx.quadraticCurveTo(x-s*0.3, y+s*0.1, x, y+s*0.15)
+  ctx.lineTo(x, y-s*0.1); ctx.closePath(); ctx.fill()
+  ctx.strokeStyle = 'rgba(0,0,0,0.12)'; ctx.lineWidth = 0.5; ctx.stroke()
+
+  // 号码
+  ctx.fillStyle = isGK ? '#000' : '#fff'
+  ctx.font = 'bold '+(s*0.45)+'px sans-serif'
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
+  ctx.fillText(''+num, x, y+s*0.12)
+
+  // 袖子+手
+  ctx.strokeStyle = jc; ctx.lineWidth = s*0.14; ctx.lineCap = 'round'
+  ctx.beginPath(); ctx.moveTo(x-s*0.42,y-s*0.05); ctx.lineTo(x-s*0.55,y+s*0.15); ctx.stroke()
+  ctx.beginPath(); ctx.moveTo(x+s*0.42,y-s*0.05); ctx.lineTo(x+s*0.55,y+s*0.15); ctx.stroke()
+  ctx.strokeStyle = '#dbb896'; ctx.lineWidth = s*0.1
+  ctx.beginPath(); ctx.moveTo(x-s*0.55,y+s*0.15); ctx.lineTo(x-s*0.6,y+s*0.25); ctx.stroke()
+  ctx.beginPath(); ctx.moveTo(x+s*0.55,y+s*0.15); ctx.lineTo(x+s*0.6,y+s*0.25); ctx.stroke()
+
+  // GK手套
+  if (isGK) {
+    ctx.fillStyle = '#FF851B'
+    ctx.beginPath(); ctx.arc(x-s*0.62,y+s*0.27,s*0.11,0,Math.PI*2); ctx.fill()
+    ctx.beginPath(); ctx.arc(x+s*0.62,y+s*0.27,s*0.11,0,Math.PI*2); ctx.fill()
+  }
+
+  // 头
+  ctx.beginPath(); ctx.arc(x, y-s*0.32, s*0.28, 0, Math.PI*2)
+  ctx.fillStyle = '#f0d0a0'; ctx.fill()
+  // 头发
+  ctx.beginPath(); ctx.arc(x, y-s*0.32, s*0.28, Math.PI*1.1, Math.PI*1.9)
+  ctx.strokeStyle = '#3a2518'; ctx.lineWidth = s*0.12; ctx.stroke()
+
+  // 选中高亮
+  if (highlighted) {
+    ctx.beginPath(); ctx.arc(x, y+s*0.1, s*1.15, 0, Math.PI*2)
+    ctx.strokeStyle = '#ffd700'; ctx.lineWidth = 2; ctx.stroke()
+  }
+
+  // 持球标记已移除（球独立渲染在脚下，不需要额外标记）
+}
+
+function drawMatchHUD() {
+  var myT=getMyTeam(),opT=opponentTeam||{city:'对手',color:'#888',emoji:'❓'}
+  var hudY=safeTop+4,hudH=40,now=Date.now()
+  ctx.fillStyle='rgba(0,0,0,0.45)';ctx.fillRect(0,0,W,hudY+hudH)
+  render.drawText(ctx,myT.emoji+' '+(myT.city||'').substring(0,3),W*0.16,hudY+hudH/2,(W*0.026)+'px sans-serif',myT.color||'#fff','center')
+  render.drawStrokeText(ctx,myGoals+' : '+opGoals,W/2,hudY+hudH/2,'bold '+(W*0.055)+'px sans-serif','#fff','rgba(0,0,0,0.5)',3)
+  render.drawText(ctx,(opT.city||'').substring(0,3)+' '+opT.emoji,W*0.84,hudY+hudH/2,(W*0.026)+'px sans-serif',opT.color||'#fff','center')
+  var secs=Math.ceil(matchTime/1000),mins=Math.floor(secs/60),ss=secs%60
+  render.drawText(ctx,'⏱'+mins+':'+(ss<10?'0':'')+ss,W/2,hudY+hudH+10,(W*0.023)+'px sans-serif',secs<=10?'#ff6b6b':'rgba(255,255,255,0.5)')
+  var tipY=PB+12
+  if (ball.side==='my'&&ball.idx===ctrlIdx) render.drawText(ctx,'↑射门  ←→传球',W/2,tipY,(W*0.023)+'px sans-serif','rgba(255,215,0,0.35)')
+  else if (ball.side==='op') render.drawText(ctx,'🛡️ 靠近对手抢断',W/2,tipY,(W*0.023)+'px sans-serif','rgba(255,100,100,0.3)')
+  else if (ball.side==='') render.drawText(ctx,'⚽ 靠近球抢球',W/2,tipY,(W*0.023)+'px sans-serif','rgba(255,255,255,0.2)')
+  if (secs<=10&&secs>0&&Math.sin(now/200)>0) render.drawText(ctx,'⏱'+secs+'秒！',W/2,py(0.5),'bold '+(W*0.035)+'px sans-serif','rgba(255,100,100,0.25)')
+}
+
+// ==================== 赛后结算 ====================
+function drawMatchResult() {
+  var t = Date.now() / 1000
+  render.drawMenuBG(ctx, W, H, t)
+  var cx = W / 2
+  var myT = getMyTeam()
+  var opT = opponentTeam || { city:'对手', color:'#888', emoji:'❓' }
+  var isWin = myGoals > opGoals
+  var isDraw = myGoals === opGoals
+
+  // 结果标题
+  var resultText = isWin ? '🏆 胜利！' : isDraw ? '🤝 平局' : '😞 失败'
+  var resultColor = isWin ? '#ffd700' : isDraw ? '#4CAF50' : '#ff6b6b'
+  render.drawStrokeText(ctx, resultText, cx, safeTop + H * 0.08, 'bold ' + (W * 0.08) + 'px sans-serif', resultColor, 'rgba(0,0,0,0.4)', 4)
+
+  // 比分
+  render.drawText(ctx, myT.emoji + ' ' + myT.city, cx - W * 0.22, safeTop + H * 0.18, 'bold ' + (W * 0.035) + 'px sans-serif', myT.color)
+  render.drawStrokeText(ctx, myGoals + ' : ' + opGoals, cx, safeTop + H * 0.18, 'bold ' + (W * 0.08) + 'px sans-serif', '#fff', 'rgba(0,0,0,0.4)', 3)
+  render.drawText(ctx, opT.city + ' ' + opT.emoji, cx + W * 0.22, safeTop + H * 0.18, 'bold ' + (W * 0.035) + 'px sans-serif', opT.color)
+
+  // 进球时间线
+  if (goalEvents.length > 0) {
+    render.drawText(ctx, '⚽ 进球记录', cx, safeTop + H * 0.27, (W * 0.03) + 'px sans-serif', 'rgba(255,255,255,0.5)')
+    for (var i = 0; i < Math.min(goalEvents.length, 6); i++) {
+      var ge = goalEvents[i]
+      var geTime = Math.floor(ge.time / 1000)
+      var geText = (ge.side === 'my' ? myT.city : opT.city) + " " + geTime + "'"
+      var geColor = ge.side === 'my' ? '#4CAF50' : '#ff6b6b'
+      render.drawText(ctx, '⚽ ' + geText, cx, safeTop + H * 0.31 + i * 22, (W * 0.026) + 'px sans-serif', geColor)
+    }
+  }
+
+  // 奖励
+  var rewardY = safeTop + H * 0.56
+  var reward = isWin ? (myGoals * 5 + 15) : 5
+  render.drawText(ctx, '💰 获得 ' + reward + ' 金币', cx, rewardY, 'bold ' + (W * 0.035) + 'px sans-serif', '#ffd700')
+
+  // 赛事进度
+  var schedule = matchMode === 'league' ? LEAGUE_SCHEDULE : WC_SCHEDULE
+  var progress = matchMode === 'league' ? D.leagueWins.length : D.wcWins.length
+  var total = schedule.length
+  render.drawText(ctx, (matchMode === 'league' ? '联赛' : '世界杯') + '进度: ' + progress + '/' + total, cx, rewardY + 28, (W * 0.026) + 'px sans-serif', 'rgba(255,255,255,0.4)')
+
+  // 按钮
+  var bw = W * 0.5, bh = W * 0.11
+
+  // 下一场/重来
+  var needRetry = (matchMode === 'wc' && !isWin) || (matchMode === 'league' && !isWin && !isDraw)
+  if (needRetry) {
+    var retryMsg = matchMode === 'wc' ? '需要获胜才能晋级' : '需要赢球或平局才能晋级'
+    render.drawText(ctx, retryMsg, cx, H * 0.72, (W * 0.026) + 'px sans-serif', 'rgba(255,255,255,0.4)')
+    render.drawButton(ctx, cx - bw / 2, H * 0.76, bw, bh, '🔄 重新挑战', ['#E65100', '#FF9800'])
+  } else if (progress < total) {
+    render.drawButton(ctx, cx - bw / 2, H * 0.72, bw, bh, '⚽ 下一场', ['#2E7D32', '#4CAF50'])
+  } else {
+    render.drawText(ctx, '🎉 恭喜通关！', cx, H * 0.72, 'bold ' + (W * 0.04) + 'px sans-serif', '#ffd700')
+  }
+
+  // 分享
+  render.drawButton(ctx, cx - bw / 2, H * 0.84, bw, bh, '📤 分享战绩', ['rgba(255,255,255,0.08)', 'rgba(255,255,255,0.04)'], '#8BC34A')
+  render.drawText(ctx, '返回首页', cx, H * 0.95, (W * 0.028) + 'px sans-serif', 'rgba(255,255,255,0.25)')
+}
+
+// 排行榜已移除
+
+// ==================== 点球大战 · 射门 ====================
+var penaltySpotY = 0, goalLineY = 0, goalL = 0, goalR = 0, goalW2 = 0
+
+function initChlAttack() {
+  chlShots = []; chlGoals = 0; chlRound = 0; chlRole = 'attack'; chlResults = []
+  chlPhase = 'ready'; chlTimer = Date.now()
+  // 点球场地参数
+  goalLineY = H * 0.18
+  penaltySpotY = H * 0.62
+  goalW2 = W * 0.55
+  goalL = W / 2 - goalW2 / 2; goalR = W / 2 + goalW2 / 2
+  chlGKAIX = W / 2
+  particles = []; floats = []
+  scene = 'chlAttack'
+}
+
+function resetChlBallAttack() {
+  chlBall.x = W / 2; chlBall.y = penaltySpotY
+  chlBall.vx = 0; chlBall.vy = 0
+  chlGKAIX = W / 2
+}
+
+function updateChlAttack(dt) {
+  var now = Date.now(), dtF = dt / 16
+  if (chlPhase === 'ready') {
+    if (now - chlTimer > 1000) { chlPhase = 'aim'; resetChlBallAttack() }
+    return
+  }
+  if (chlPhase === 'flying') {
+    chlBall.x += chlBall.vx * dtF; chlBall.y += chlBall.vy * dtF
+    // AI GK扑球（随机选方向）
+    var gkTarget = chlGKAIX + (chlBall.x - chlGKAIX) * 0.6
+    var gkSpd = 2.0 * dtF
+    if (Math.abs(gkTarget - chlGKAIX) > 2) chlGKAIX += (gkTarget > chlGKAIX ? 1 : -1) * gkSpd
+    chlGKAIX = clamp(chlGKAIX, goalL + 15, goalR - 15)
+
+    // 球到球门线
+    if (chlBall.y < goalLineY + 10) {
+      var inGoal = chlBall.x > goalL + 5 && chlBall.x < goalR - 5
+      var saved = Math.abs(chlBall.x - chlGKAIX) < PLAYER_R * 2.5
+      if (inGoal && !saved) {
+        chlGoals++; chlResults.push('goal')
+        floats.push({ x:W/2, y:H*0.35, text:'⚽ GOAL!', color:'#ffd700', born:now })
+        audio.playGoal()
+      } else if (saved) {
+        chlResults.push('saved')
+        floats.push({ x:W/2, y:H*0.35, text:'扑救!', color:'#ff6b6b', born:now })
+        audio.playMiss()
+      } else {
+        chlResults.push('miss')
+        floats.push({ x:W/2, y:H*0.35, text:'打偏!', color:'#ff6b6b', born:now })
+        audio.playMiss()
+      }
+      chlPhase = 'result'; chlTimer = now; return
+    }
+    if (chlBall.x < 0 || chlBall.x > W || chlBall.y > H) {
+      chlResults.push('miss')
+      floats.push({ x:W/2, y:H*0.35, text:'打偏!', color:'#ff6b6b', born:now })
+      chlPhase = 'result'; chlTimer = now
+    }
+    return
+  }
+  if (chlPhase === 'result') {
+    if (now - chlTimer > 1500) {
+      chlRound++
+      if (chlRound >= CHL_TOTAL) { chlPhase = 'done'; uploadChallenge() }
+      else { chlPhase = 'ready'; chlTimer = now }
+    }
+  }
+}
+
+function chlShoot(svx, svy) {
+  if (chlPhase !== 'aim') return
+  var power = Math.min(Math.sqrt(svx*svx+svy*svy) / 60, 1.5)
+  var shootSpeed = (2.5 + getStatValue('atk') * 0.3) * Math.max(power, 0.5)
+  var dist = Math.sqrt(svx * svx + svy * svy)
+  if (dist < 0.1) return
+  chlBall.vx = (svx / dist) * shootSpeed
+  chlBall.vy = (svy / dist) * shootSpeed
+  chlShots.push({ sx:chlBall.x, sy:chlBall.y, vx:chlBall.vx, vy:chlBall.vy })
+  chlPhase = 'flying'
+  audio.playKick(4)
+  for (var i = 0; i < 5; i++) {
+    particles.push({ x:chlBall.x, y:chlBall.y, vx:(Math.random()-0.5)*3, vy:-Math.random()*2, color:'#ffd700', born:Date.now(), size:2+Math.random()*2 })
+  }
+}
+
+function uploadChallenge() {
+  var mt = getMyTeam(); var teamLabel = mt.emoji ? mt.emoji + mt.city : ''
+  try {
+    wx.cloud.callFunction({
+      name: 'challenge',
+      data: {
+        action: 'create',
+        nickname: D.nickname || '匿名球员',
+        team: teamLabel,
+        shots: chlShots,
+        goalsScored: chlGoals
+      },
+      success: function(res) {
+        if (res.result && res.result.code === 0) {
+          chlId = res.result.challengeId
+        }
+      }
+    })
+  } catch(e) {}
+  // 不等上传完成，直接进结果页
+  chlResultData = null
+  scene = 'chlResult'
+}
+
+function drawChlAttack() {
+  // 点球大战背景
+  ctx.fillStyle = '#0a2a10'; ctx.fillRect(0, 0, W, H)
+  var cx = W / 2, now = Date.now()
+  var myT = getMyTeam()
+
+  // 草皮（禁区范围）
+  ctx.fillStyle = '#0e3a16'; ctx.fillRect(W*0.05, goalLineY - 10, W*0.9, penaltySpotY + 80 - goalLineY)
+  // 禁区线
+  ctx.strokeStyle = 'rgba(255,255,255,0.12)'; ctx.lineWidth = 1
+  ctx.strokeRect(goalL - 20, goalLineY - 5, goalW2 + 40, penaltySpotY - goalLineY + 30)
+  // 罚球点
+  ctx.beginPath(); ctx.arc(cx, penaltySpotY, 3, 0, Math.PI*2)
+  ctx.fillStyle = 'rgba(255,255,255,0.3)'; ctx.fill()
+
+  // 球门（大号，占屏幕上部）
+  var goalH = 25
+  render.drawGoal(ctx, goalL, goalLineY - goalH, goalW2, goalH, false)
+
+  // AI守门员（在门线上）
+  drawMiniPlayer(ctx, chlGKAIX, goalLineY + 5, PLAYER_R * 1.2, '#2ECC40', 1, false, false, true)
+
+  // 球
+  if (chlPhase === 'aim' || chlPhase === 'flying') {
+    render.drawBall(ctx, chlBall.x, chlBall.y, PLAYER_R * 1.4, chlPhase === 'flying')
+    // 飞行尾迹
+    if (chlPhase === 'flying') {
+      for (var ti = 1; ti <= 4; ti++) {
+        ctx.beginPath(); ctx.arc(chlBall.x-chlBall.vx*ti*1.5, chlBall.y-chlBall.vy*ti*1.5, PLAYER_R*0.2*(1-ti/5), 0, Math.PI*2)
+        ctx.fillStyle = 'rgba(255,200,50,'+(0.25*(1-ti/5))+')'; ctx.fill()
+      }
+    }
+  }
+
+  // 射手（站在球后面）
+  if (chlPhase === 'aim') {
+    drawMiniPlayer(ctx, cx, penaltySpotY + PLAYER_R * 3, PLAYER_R * 1.2, safeColor(myT.color), 9, true, false, false)
+    // 瞄准线 + 力量条
+    if (touchDown) {
+      var sdx = touchX - touchStartX, sdy = touchY - touchStartY
+      var sDist = Math.sqrt(sdx*sdx + sdy*sdy)
+      if (sDist > 8 && sdy < 0) {
+        var aLen = Math.min(sDist * 1.5, penaltySpotY - goalLineY)
+        var ax = cx + (sdx / sDist) * aLen * 0.4
+        var ay = penaltySpotY + (sdy / sDist) * aLen
+        // 瞄准线
+        ctx.beginPath(); ctx.moveTo(cx, penaltySpotY); ctx.lineTo(ax, ay)
+        ctx.strokeStyle = 'rgba(255,215,0,0.5)'; ctx.lineWidth = 2; ctx.stroke()
+        ctx.beginPath(); ctx.arc(ax, ay, 5, 0, Math.PI*2)
+        ctx.fillStyle = 'rgba(255,215,0,0.6)'; ctx.fill()
+
+        // 力量条（右侧）
+        var power = Math.min(sDist / 80, 1.5)
+        var powerPct = power / 1.5
+        var barX2 = W * 0.88, barY2 = penaltySpotY - 60, barH2 = 100, barW2 = 10
+        // 背景
+        ctx.fillStyle = 'rgba(255,255,255,0.08)'
+        render.roundRect(ctx, barX2, barY2, barW2, barH2, 4); ctx.fill()
+        // 填充（绿→黄→红）
+        var fillH = barH2 * powerPct
+        var powerColor = powerPct < 0.5 ? '#4CAF50' : powerPct < 0.8 ? '#FFD700' : '#FF5722'
+        ctx.fillStyle = powerColor
+        render.roundRect(ctx, barX2, barY2 + barH2 - fillH, barW2, fillH, 4); ctx.fill()
+        // 标签
+        var powerLabel = powerPct < 0.3 ? '轻' : powerPct < 0.7 ? '中' : '大力'
+        render.drawText(ctx, powerLabel, barX2 + barW2/2, barY2 - 10, (W*0.022)+'px sans-serif', powerColor, 'center')
+
+        render.drawText(ctx, '松手射门!', cx, penaltySpotY + PLAYER_R * 6, (W*0.03)+'px sans-serif', '#ffd700')
+      }
+    } else {
+      render.drawText(ctx, '↑ 向上滑动射门', cx, H * 0.78, (W*0.032)+'px sans-serif', 'rgba(255,255,255,0.35)')
+      render.drawText(ctx, '滑动越长力量越大', cx, H * 0.82, (W*0.024)+'px sans-serif', 'rgba(255,255,255,0.2)')
+    }
+  }
+
+  // 粒子+飘字
+  for (var pi = particles.length-1; pi >= 0; pi--) {
+    var p2 = particles[pi]; var pAge = (now - p2.born) / 600
+    if (pAge > 1) { particles.splice(pi, 1); continue }
+    p2.x += p2.vx; p2.y += p2.vy; p2.vy += 0.1
+    ctx.globalAlpha = 1 - pAge; ctx.beginPath(); ctx.arc(p2.x, p2.y, p2.size*(1-pAge*0.5), 0, Math.PI*2)
+    ctx.fillStyle = p2.color; ctx.fill(); ctx.globalAlpha = 1
+  }
+  for (var fi = floats.length-1; fi >= 0; fi--) {
+    var f2 = floats[fi]; var fAge = (now - f2.born) / 1500
+    if (fAge > 1) { floats.splice(fi, 1); continue }
+    ctx.globalAlpha = fAge < 0.7 ? 1 : (1-(fAge-0.7)/0.3)
+    render.drawStrokeText(ctx, f2.text, f2.x, f2.y-fAge*50, 'bold '+(W*0.07)+'px sans-serif', f2.color, 'rgba(0,0,0,0.5)', 3)
+    ctx.globalAlpha = 1
+  }
+
+  // HUD — 点球比分板
+  ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fillRect(0, 0, W, safeTop + 44)
+  render.drawStrokeText(ctx, '⚽ 点球大战', cx, safeTop + 16, 'bold '+(W*0.04)+'px sans-serif', '#ffd700', 'rgba(0,0,0,0.5)', 2)
+  // 5个球的状态圆点（根据实际每球结果）
+  for (var ri = 0; ri < CHL_TOTAL; ri++) {
+    var dotX2 = cx + (ri - 2) * 22
+    var dotColor
+    if (ri < chlResults.length) {
+      dotColor = chlResults[ri] === 'goal' ? '#4CAF50' : '#ff6b6b'
+    } else {
+      dotColor = 'rgba(255,255,255,0.15)'
+    }
+    ctx.beginPath(); ctx.arc(dotX2, safeTop + 36, 6, 0, Math.PI*2)
+    ctx.fillStyle = dotColor; ctx.fill()
+    if (ri === chlRound && chlPhase !== 'done') {
+      ctx.strokeStyle = '#ffd700'; ctx.lineWidth = 2; ctx.stroke()
+    }
+  }
+
+  // 准备提示
+  if (chlPhase === 'ready') {
+    ctx.fillStyle = 'rgba(0,0,0,0.4)'; ctx.fillRect(0, safeTop+44, W, H-safeTop-44)
+    render.drawStrokeText(ctx, '第 '+(chlRound+1)+' 罚', cx, H*0.45, 'bold '+(W*0.1)+'px sans-serif', '#fff', 'rgba(0,0,0,0.5)', 4)
+  }
+  if (chlPhase === 'done') {
+    ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.fillRect(0, 0, W, H)
+    render.drawStrokeText(ctx, '点球完成!', cx, H*0.28, 'bold '+(W*0.07)+'px sans-serif', '#ffd700', 'rgba(0,0,0,0.5)', 3)
+
+    // 显示5个球的实际结果
+    var resultStr = ''
+    for (var di = 0; di < CHL_TOTAL; di++) {
+      if (di < chlResults.length) {
+        resultStr += chlResults[di] === 'goal' ? '⚽' : '❌'
+      } else { resultStr += '⬜' }
+    }
+    render.drawText(ctx, resultStr, cx, H*0.36, (W*0.08)+'px sans-serif', '#fff')
+    render.drawText(ctx, '罚进 '+chlGoals+' / '+CHL_TOTAL+' 球', cx, H*0.43, 'bold '+(W*0.04)+'px sans-serif', '#fff')
+
+    // 说明流程
+    render.drawText(ctx, '分享给好友，让 TA 来扑救你的点球！', cx, H*0.52, (W*0.028)+'px sans-serif', 'rgba(255,255,255,0.5)')
+    render.drawText(ctx, '好友扑完后，双方对比结果', cx, H*0.56, (W*0.025)+'px sans-serif', 'rgba(255,255,255,0.3)')
+
+    // 分享按钮（主要CTA）
+    var btnScale = 1 + Math.sin(Date.now()/400) * 0.02
+    ctx.save(); ctx.translate(cx, H*0.65); ctx.scale(btnScale, btnScale); ctx.translate(-cx, -H*0.65)
+    render.drawButton(ctx, cx-W*0.3, H*0.65-W*0.06, W*0.6, W*0.12, '📤 发送给好友扑救', ['#C62828','#E53935'])
+    ctx.restore()
+
+    render.drawText(ctx, '返回首页', cx, H*0.82, (W*0.026)+'px sans-serif', 'rgba(255,255,255,0.25)')
+  }
+}
+
+// ==================== 点球大战 · 扑救 ====================
+function initChlDefend(data) {
+  chlData = data; chlSaves = 0; chlRound = 0; chlRole = 'defend'; chlDefResults = []
+  chlPhase = 'ready'; chlTimer = Date.now()
+  chlGKX = W / 2
+  goalLineY = H * 0.75  // 防守视角：球门在下方
+  penaltySpotY = H * 0.2
+  goalW2 = W * 0.55
+  goalL = W / 2 - goalW2 / 2; goalR = W / 2 + goalW2 / 2
+  particles = []; floats = []
+  scene = 'chlDefend'
+}
+
+function updateChlDefend(dt) {
+  var now = Date.now(), dtF = dt / 16
+  if (chlPhase === 'ready') {
+    if (now - chlTimer > 1500) {
+      chlPhase = 'incoming'
+      if (!chlData || !chlData.shots || !chlData.shots[chlRound]) { chlPhase = 'done'; return }
+      var shot = chlData.shots[chlRound]
+      // 把进攻方的射门轨迹翻转为从上往下飞
+      chlBall.x = W - shot.sx  // 镜像X
+      chlBall.y = penaltySpotY
+      chlBall.vx = -shot.vx * 0.8  // 镜像并适当减速
+      chlBall.vy = Math.abs(shot.vy) * 0.8  // 改为向下飞
+      chlTimer = now
+    }
+    return
+  }
+  if (chlPhase === 'incoming') {
+    chlBall.x += chlBall.vx * dtF
+    chlBall.y += chlBall.vy * dtF
+
+    // 守门员跟手
+    if (touchDown) {
+      var gkSpeed = (3.0 + getStatValue('def') * 0.4) * dtF
+      var gkDx = touchX - chlGKX
+      if (Math.abs(gkDx) > 2) chlGKX += (gkDx > 0 ? 1 : -1) * Math.min(gkSpeed, Math.abs(gkDx))
+      chlGKX = clamp(chlGKX, goalL + 10, goalR - 10)
+    }
+
+    // 球到达门线
+    if (chlBall.y > goalLineY - 10) {
+      var inGoal = chlBall.x > goalL + 5 && chlBall.x < goalR - 5
+      var saved = Math.abs(chlBall.x - chlGKX) < PLAYER_R * (2.5 + getStatValue('def') * 0.3)
+      if (inGoal && saved) {
+        chlSaves++; chlDefResults.push('save')
+        floats.push({ x:W/2, y:H*0.55, text:'扑救成功!', color:'#4CAF50', born:now })
+        audio.playCheer()
+      } else if (inGoal) {
+        chlDefResults.push('fail')
+        floats.push({ x:W/2, y:H*0.55, text:'失球...', color:'#ff6b6b', born:now })
+        audio.playMiss()
+      } else {
+        chlSaves++; chlDefResults.push('save')
+        floats.push({ x:W/2, y:H*0.55, text:'对手打偏!', color:'#4CAF50', born:now })
+      }
+      chlPhase = 'result'; chlTimer = now
+    }
+    if (chlBall.x < -20 || chlBall.x > W + 20 || chlBall.y > H + 20) {
+      chlSaves++; chlDefResults.push('save')
+      floats.push({ x: W/2, y: H*0.5, text:'对手打偏!', color:'#4CAF50', born: now })
+      chlPhase = 'result'; chlTimer = now
+    }
+    return
+  }
+  if (chlPhase === 'result') {
+    if (now - chlTimer > 1200) {
+      chlRound++
+      if (chlRound >= CHL_TOTAL) {
+        chlPhase = 'done'
+        submitChlDefense()
+      } else {
+        chlPhase = 'ready'; chlTimer = now
+      }
+    }
+  }
+}
+
+function submitChlDefense() {
+  var mt = getMyTeam(); var teamLabel = mt.emoji ? mt.emoji + mt.city : ''
+  try {
+    wx.cloud.callFunction({
+      name: 'challenge',
+      data: {
+        action: 'respond',
+        challengeId: chlData._id,
+        nickname: D.nickname || '匿名球员',
+        team: teamLabel,
+        saves: chlSaves
+      },
+      success: function(res) {
+        if (res.result && res.result.code === 0) {
+          chlResultData = res.result.data
+        }
+      }
+    })
+  } catch(e) {}
+  scene = 'chlResult'
+}
+
+function drawChlDefend() {
+  ctx.fillStyle = '#0a2a10'; ctx.fillRect(0, 0, W, H)
+  var cx = W / 2, now = Date.now()
+  var myT = getMyTeam()
+
+  // 草皮
+  ctx.fillStyle = '#0e3a16'; ctx.fillRect(W*0.05, penaltySpotY - 30, W*0.9, goalLineY - penaltySpotY + 60)
+  ctx.strokeStyle = 'rgba(255,255,255,0.12)'; ctx.lineWidth = 1
+  ctx.strokeRect(goalL - 20, penaltySpotY - 20, goalW2 + 40, goalLineY - penaltySpotY + 40)
+
+  // 对手射手（上方）
+  drawMiniPlayer(ctx, cx, penaltySpotY - PLAYER_R, PLAYER_R * 1.2, '#E53935', 9, false, false, false)
+
+  // 球（从上方飞来）
+  if (chlPhase === 'incoming') {
+    render.drawBall(ctx, chlBall.x, chlBall.y, PLAYER_R * 1.4, true)
+    // 来球轨迹
+    for (var ti = 1; ti <= 3; ti++) {
+      ctx.beginPath(); ctx.arc(chlBall.x-chlBall.vx*ti, chlBall.y-chlBall.vy*ti, PLAYER_R*0.15*(1-ti/4), 0, Math.PI*2)
+      ctx.fillStyle = 'rgba(255,100,50,'+(0.2*(1-ti/4))+')'; ctx.fill()
+    }
+  }
+
+  // 球门（下方大号）
+  var goalH = 25
+  render.drawGoal(ctx, goalL, goalLineY, goalW2, goalH, true)
+
+  // 守门员（你控制）
+  drawMiniPlayer(ctx, chlGKX, goalLineY - 5, PLAYER_R * 1.3, safeColor(myT.color), 1, true, false, true)
+
+  // 滑动提示
+  render.drawText(ctx, '← 滑动控制守门员 →', cx, goalLineY + 50, (W*0.03)+'px sans-serif', 'rgba(255,255,255,0.3)')
+
+  // 飘字
+  for (var fi = floats.length-1; fi >= 0; fi--) {
+    var f2 = floats[fi]; var fAge = (now - f2.born) / 1500
+    if (fAge > 1) { floats.splice(fi, 1); continue }
+    ctx.globalAlpha = fAge < 0.7 ? 1 : (1-(fAge-0.7)/0.3)
+    render.drawStrokeText(ctx, f2.text, f2.x, f2.y-fAge*40, 'bold '+(W*0.07)+'px sans-serif', f2.color, 'rgba(0,0,0,0.5)', 3)
+    ctx.globalAlpha = 1
+  }
+
+  // HUD — 点球比分板
+  ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fillRect(0, 0, W, safeTop + 44)
+  render.drawStrokeText(ctx, '🧤 扑救挑战', cx, safeTop + 16, 'bold '+(W*0.04)+'px sans-serif', '#4CAF50', 'rgba(0,0,0,0.5)', 2)
+  render.drawText(ctx, 'vs ' + (chlData.attackerNickname || '对手'), cx, safeTop + 36, (W*0.025)+'px sans-serif', 'rgba(255,255,255,0.4)')
+  // 5个球的状态
+  for (var ri = 0; ri < CHL_TOTAL; ri++) {
+    var dotX2 = cx + (ri - 2) * 22
+    var dotColor
+    if (ri < chlDefResults.length) {
+      dotColor = chlDefResults[ri] === 'save' ? '#4CAF50' : '#ff6b6b'
+    } else {
+      dotColor = 'rgba(255,255,255,0.15)'
+    }
+    ctx.beginPath(); ctx.arc(dotX2, safeTop + 50, 5, 0, Math.PI*2)
+    ctx.fillStyle = dotColor; ctx.fill()
+  }
+
+  if (chlPhase === 'ready') {
+    ctx.fillStyle = 'rgba(0,0,0,0.4)'; ctx.fillRect(0, safeTop+55, W, H-safeTop-55)
+    render.drawStrokeText(ctx, '第 '+(chlRound+1)+' 罚', cx, H*0.4, 'bold '+(W*0.1)+'px sans-serif', '#fff', 'rgba(0,0,0,0.5)', 4)
+    render.drawText(ctx, '准备扑救...', cx, H*0.5, (W*0.035)+'px sans-serif', 'rgba(255,255,255,0.4)')
+  }
+  if (chlPhase === 'done') {
+    ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(0, 0, W, H)
+    render.drawStrokeText(ctx, '扑救完成!', cx, H*0.35, 'bold '+(W*0.07)+'px sans-serif', '#4CAF50', 'rgba(0,0,0,0.5)', 3)
+    render.drawText(ctx, '扑救 '+chlSaves+'/'+CHL_TOTAL, cx, H*0.45, 'bold '+(W*0.05)+'px sans-serif', '#fff')
+    render.drawButton(ctx, cx-W*0.25, H*0.55, W*0.5, W*0.11, '查看结果', ['#2E7D32','#4CAF50'])
+  }
+}
+
+// ==================== 点球大战 · 结果 ====================
+function drawChlResult() {
+  var t = Date.now() / 1000
+  render.drawMenuBG(ctx, W, H, t)
+  var cx = W / 2, st = safeTop
+
+  render.drawStrokeText(ctx, '⚽ 点球大战', cx, st + H*0.05, 'bold '+(W*0.05)+'px sans-serif', '#ffd700', 'rgba(0,40,0,0.5)', 3)
+
+  if (chlRole === 'attack') {
+    // 进攻方：你射完了，等待好友扑救
+    render.drawText(ctx, '你的点球成绩', cx, st + H*0.14, (W*0.03)+'px sans-serif', 'rgba(255,255,255,0.4)')
+
+    // 大号比分
+    ctx.shadowColor = '#ffd700'; ctx.shadowBlur = 10
+    render.drawStrokeText(ctx, chlGoals + ' / ' + CHL_TOTAL, cx, st + H*0.22, 'bold '+(W*0.12)+'px sans-serif', '#ffd700', 'rgba(0,0,0,0.5)', 4)
+    ctx.shadowBlur = 0
+
+    // 5球详情
+    var ballStr = ''
+    for (var bi = 0; bi < CHL_TOTAL; bi++) ballStr += bi < chlGoals ? ' ⚽ ' : ' ❌ '
+    render.drawText(ctx, ballStr, cx, st + H*0.3, (W*0.06)+'px sans-serif', '#fff')
+
+    // 流程说明
+    ctx.fillStyle = 'rgba(255,255,255,0.03)'
+    render.roundRect(ctx, W*0.1, st + H*0.37, W*0.8, H*0.16, 10); ctx.fill()
+    render.drawText(ctx, '📱 下一步', cx, st + H*0.4, 'bold '+(W*0.03)+'px sans-serif', 'rgba(255,255,255,0.6)')
+    render.drawText(ctx, '1. 点击下方按钮分享给好友', cx, st + H*0.44, (W*0.026)+'px sans-serif', 'rgba(255,255,255,0.4)')
+    render.drawText(ctx, '2. 好友打开后扑救你的5个点球', cx, st + H*0.48, (W*0.026)+'px sans-serif', 'rgba(255,255,255,0.4)')
+    render.drawText(ctx, '3. 对比谁更强！', cx, st + H*0.52, (W*0.026)+'px sans-serif', 'rgba(255,255,255,0.4)')
+
+    var btnScale = 1 + Math.sin(t * 3) * 0.015
+    ctx.save(); ctx.translate(cx, st + H*0.62); ctx.scale(btnScale, btnScale); ctx.translate(-cx, -(st + H*0.62))
+    render.drawButton(ctx, cx - W*0.3, st + H*0.62 - W*0.06, W*0.6, W*0.12, '📤 发给好友来扑救', ['#C62828','#E53935'])
+    ctx.restore()
+
+  } else {
+    // 防守方：显示完整对比
+    var atkName = chlData ? (chlData.attackerNickname || '对手') : '对手'
+    var atkTeam = chlData ? (chlData.team || '') : ''
+    var atkGoals = chlData ? (chlData.goalsScored || 0) : 0
+
+    // 射手成绩（从云端数据，用atkGoals简化显示）
+    render.drawText(ctx, '⚽ 射手 · ' + atkName, cx, st + H*0.13, 'bold '+(W*0.032)+'px sans-serif', '#E53935')
+    // 用 ⚽/❌ 显示（无法还原每球详情，用总数近似）
+    var atkStr = ''; for (var ai = 0; ai < CHL_TOTAL; ai++) atkStr += ai < atkGoals ? ' ⚽ ' : ' ❌ '
+    render.drawText(ctx, atkStr, cx, st + H*0.18, (W*0.05)+'px sans-serif', '#fff')
+    render.drawText(ctx, '罚进 ' + atkGoals + ' 球', cx, st + H*0.22, (W*0.028)+'px sans-serif', 'rgba(255,255,255,0.4)')
+
+    // VS
+    render.drawStrokeText(ctx, 'VS', cx, st + H*0.28, 'bold '+(W*0.06)+'px sans-serif', '#ffd700', 'rgba(0,0,0,0.4)', 3)
+
+    // 守门员成绩（用实际每球结果）
+    render.drawText(ctx, '🧤 守门员 · ' + (D.nickname || '我'), cx, st + H*0.34, 'bold '+(W*0.032)+'px sans-serif', '#4CAF50')
+    var defStr = ''
+    for (var di2 = 0; di2 < CHL_TOTAL; di2++) {
+      if (di2 < chlDefResults.length) { defStr += chlDefResults[di2] === 'save' ? ' 🧤 ' : ' ❌ ' }
+      else { defStr += ' ⬜ ' }
+    }
+    render.drawText(ctx, defStr, cx, st + H*0.39, (W*0.05)+'px sans-serif', '#fff')
+    render.drawText(ctx, '扑出 ' + chlSaves + ' 球', cx, st + H*0.43, (W*0.028)+'px sans-serif', 'rgba(255,255,255,0.4)')
+
+    // 结果判定
+    var defWin = chlSaves >= atkGoals
+    var resultText = defWin ? '🛡️ 守门员获胜！' : '⚽ 射手获胜！'
+    var resultColor = defWin ? '#4CAF50' : '#E53935'
+    var resultDesc = defWin
+      ? '扑出 ' + chlSaves + ' 球，成功化解' + atkName + '的点球！'
+      : atkName + '罚进 ' + atkGoals + ' 球，射门太强了！'
+
+    ctx.shadowColor = resultColor; ctx.shadowBlur = 12
+    render.drawStrokeText(ctx, resultText, cx, st + H*0.52, 'bold '+(W*0.06)+'px sans-serif', resultColor, 'rgba(0,0,0,0.4)', 3)
+    ctx.shadowBlur = 0
+    render.drawText(ctx, resultDesc, cx, st + H*0.58, (W*0.025)+'px sans-serif', 'rgba(255,255,255,0.4)')
+
+    render.drawButton(ctx, cx - W*0.25, st + H*0.66, W*0.5, W*0.1, '📤 分享结果', ['#C62828','#E53935'])
+    render.drawButton(ctx, cx - W*0.25, st + H*0.76, W*0.5, W*0.1, '⚽ 换我来射', ['#2E7D32','#4CAF50'])
+  }
+
+  render.drawText(ctx, '返回首页', cx, H*0.92, (W*0.026)+'px sans-serif', 'rgba(255,255,255,0.25)')
+}
+
+// ==================== 触摸处理 ====================
+var lastSwipeTime = 0
+
+wx.onTouchStart(function(e) {
+  var touch = e.touches[0]
+  touchDown = true; touchX = touch.clientX; touchY = touch.clientY
+  touchStartX = touch.clientX; touchStartY = touch.clientY
+
+  var tx = touch.clientX, ty = touch.clientY
+  var cx = W / 2
+  var bw = W * 0.65, bh = W * 0.12, bx = cx - bw / 2
+
+  if (scene === 'home') {
+    var mainBtnY = H * 0.42, mainBW = W * 0.7, mainBH = W * 0.14
+    // 苏超联赛（大按钮）
+    if (render.hitTest(tx, ty, cx - mainBW / 2, mainBtnY, mainBW, mainBH)) {
+      if (D.teamIdx < 0) { teamSelectMode = 'league'; scene = 'teamSelect'; return }
+      if (!D.nickname) { askNickname(function(){ scene = 'leagueMap' }); return }
+      scene = 'leagueMap'; return
+    }
+    // 底部按钮（动态数量）
+    var sBtnW = W * 0.28, sBtnH = W * 0.09, sBtnY = H * 0.68, sBtnGap = 6
+    var now3 = new Date(), wcOpen2 = (now3.getFullYear() === 2026 && now3.getMonth() >= 5 && now3.getMonth() <= 6)
+    var sActions = []
+    if (wcOpen2) sActions.push('wc')
+    sActions.push('pk'); sActions.push('train')
+    var totalSW = sActions.length * sBtnW + (sActions.length - 1) * sBtnGap
+    var sStartX = cx - totalSW / 2
+    for (var si2 = 0; si2 < sActions.length; si2++) {
+      if (render.hitTest(tx, ty, sStartX + si2 * (sBtnW + sBtnGap), sBtnY, sBtnW, sBtnH)) {
+        if (sActions[si2] === 'wc') {
+          if (D.wcTeamIdx < 0) { teamSelectMode = 'wc'; scene = 'teamSelect'; return }
+          scene = 'wcMap'; return
+        } else if (sActions[si2] === 'pk') {
+          if (D.teamIdx < 0) { teamSelectMode = 'league'; scene = 'teamSelect'; return }
+          if (!D.nickname) { askNickname(function(){ initChlAttack() }); return }
+          initChlAttack(); return
+        } else if (sActions[si2] === 'train') {
+          if (D.teamIdx < 0) { teamSelectMode = 'league'; scene = 'teamSelect'; return }
+          scene = 'training'; return
+        }
+      }
+    }
+    // 换队（战队信息旁边的🔄按钮）
+    var infoY2 = safeTop + H * 0.24
+    if (tx > cx + W * 0.1 && ty > infoY2 - 15 && ty < infoY2 + 15) { teamSelectMode = 'league'; scene = 'teamSelect'; return }
+    // 未选队时点击"选择战队"
+    if (D.teamIdx < 0 && ty > infoY2 - 15 && ty < infoY2 + 15) { teamSelectMode = 'league'; scene = 'teamSelect'; return }
+    // 昵称
+    if (!D.nickname && ty > H * 0.24 && ty < H * 0.34) { askNickname(null); return }
+  } else if (scene === 'teamSelect') {
+    if (tx < W * 0.25 && ty < safeTop + 50) { scene = 'home'; return }
+    var isWC = teamSelectMode === 'wc'
+    var pool = isWC ? WC_TEAMS : TEAMS
+    var cols = isWC ? 4 : 3
+    var cellW = W / cols, cellH = isWC ? 68 : 76
+    var gridTop = safeTop + 66 + 8, badgeR = isWC ? 18 : 22
+    for (var i = 0; i < pool.length; i++) {
+      var row = Math.floor(i / cols), col = i % cols
+      var tbx = cellW * col + cellW / 2, tby = gridTop + row * cellH
+      if (Math.sqrt(Math.pow(tx - tbx, 2) + Math.pow(ty - tby, 2)) < badgeR + 15) {
+        if (isWC) { D.wcTeamIdx = i; saveField('wcTeamIdx', D.wcTeamIdx) }
+        else { D.teamIdx = i; saveField('teamIdx', D.teamIdx) }
+        return
+      }
+    }
+    // 确认按钮
+    var selIdx = isWC ? D.wcTeamIdx : D.teamIdx
+    var btnW2 = W * 0.5, btnH2 = W * 0.1, btnY2 = H - 46
+    if (selIdx >= 0 && render.hitTest(tx, ty, cx - btnW2 / 2, btnY2, btnW2, btnH2)) {
+      // 确认后跳转到对应地图
+      if (isWC) { scene = 'wcMap' } else { scene = 'home' }
+      return
+    }
+  } else if (scene === 'training') {
+    if (tx < W * 0.25 && ty < safeTop + 50) { scene = 'home'; return }
+    // 升级按钮
+    var statKeys = ['atk', 'spd', 'def']
+    var cardY = safeTop + 120, cardH = 90
+    for (var si = 0; si < 3; si++) {
+      var lv = D.stats[statKeys[si]] || 1
+      if (lv >= 5) continue
+      var cost = lv * 20
+      var ubw = W * 0.18, ubh = 28
+      var ubx = W * 0.78 - ubw / 2, uby = cardY + si * (cardH + 12) + 30
+      if (D.coins >= cost && render.hitTest(tx, ty, ubx, uby, ubw, ubh)) {
+        D.stats[statKeys[si]]++; D.coins -= cost
+        saveField('stats', D.stats); saveField('coins', D.coins); return
+      }
+    }
+  } else if (scene === 'leagueMap') {
+    if (tx < W * 0.25 && ty < safeTop + 50) { scene = 'home'; return }
+    var progress = D.leagueWins.length
+    var nodeY = safeTop + 70, nodeH = 68
+    var btnY3 = nodeY + LEAGUE_SCHEDULE.length * nodeH + 10
+    if (progress < LEAGUE_SCHEDULE.length) {
+      if (render.hitTest(tx, ty, cx - W * 0.25, btnY3, W * 0.5, W * 0.11)) {
+        startLeagueMatch(progress); return
+      }
+    } else {
+      if (render.hitTest(tx, ty, cx - W * 0.25, btnY3 + 40, W * 0.5, W * 0.11)) {
+        D.leagueWins = []; saveField('leagueWins', D.leagueWins); return
+      }
+    }
+  } else if (scene === 'wcMap') {
+    if (tx < W * 0.25 && ty < safeTop + 50) { scene = 'home'; return }
+    if (D.leagueWins.length < 3) return
+    var progress = D.wcWins.length
+    var nodeY = safeTop + 70, nodeH = 64
+    var btnY4 = nodeY + WC_SCHEDULE.length * nodeH + 10
+    if (progress < WC_SCHEDULE.length) {
+      if (render.hitTest(tx, ty, cx - W * 0.25, btnY4, W * 0.5, W * 0.11)) {
+        startWCMatch(progress); return
+      }
+    } else {
+      if (render.hitTest(tx, ty, cx - W * 0.25, btnY4 + 40, W * 0.5, W * 0.11)) {
+        D.wcWins = []; saveField('wcWins', D.wcWins); return
+      }
+    }
+  } else if (scene === 'match') {
+    // 点击我方球员切换控制权（不含GK）
+    if (matchCountdown <= 0 && guideStep <= 0) {
+      for (var pi = 0; pi < gkIdx(); pi++) {
+        if (pi === ctrlIdx) continue
+        if (dist2({x:tx, y:ty}, myTeam[pi]) < PLAYER_R * 3) {
+          setCtrl(pi)
+          floats.push({ x: myTeam[pi].x, y: myTeam[pi].y - 20, text: '切换#' + myTeam[pi].num, color: '#ffd700', born: Date.now() })
+          return
+        }
+      }
+    }
+    // 新手引导
+    if (guideStep > 0) {
+      if (guideStep === 1) { guideStep = 2; guideTimer = 0; return }
+      else if (guideStep === 2) {
+        guideStep = 0; hasPlayedBefore = true
+        wx.setStorageSync('hasPlayed', true)
+        return
+      }
+    }
+  } else if (scene === 'prematch') {
+    // 模式选择
+    var modeBtnW = W * 0.38, modeBtnH = W * 0.1, modeY = H * 0.78
+    if (render.hitTest(tx, ty, cx - modeBtnW - 6, modeY, modeBtnW, modeBtnH)) {
+      matchTeamSize = 2; return
+    }
+    if (render.hitTest(tx, ty, cx + 6, modeY, modeBtnW, modeBtnH)) {
+      matchTeamSize = 11; return
+    }
+    // 开球
+    if (render.hitTest(tx, ty, cx - W * 0.25, H * 0.88, W * 0.5, W * 0.1)) {
+      scene = 'match'; initMatch(); return
+    }
+    if (ty > H * 0.93) { scene = matchMode === 'league' ? 'leagueMap' : 'wcMap'; return }
+  } else if (scene === 'matchResult') {
+    var bw2 = W * 0.5, bh2 = W * 0.11
+    var schedule = matchMode === 'league' ? LEAGUE_SCHEDULE : WC_SCHEDULE
+    var progress = matchMode === 'league' ? D.leagueWins.length : D.wcWins.length
+
+    // 失败重来（联赛输球或世界杯未赢）
+    var isWinOrDraw = myGoals >= opGoals
+    var needRetry = (matchMode === 'wc' && !isWinOrDraw) || (matchMode === 'league' && myGoals < opGoals)
+    if (needRetry) {
+      if (render.hitTest(tx, ty, cx - bw2 / 2, H * 0.76, bw2, bh2)) {
+        if (matchMode === 'league') startLeagueMatch(matchIdx)
+        else startWCMatch(matchIdx)
+        return
+      }
+    } else if (progress < schedule.length) {
+      // 下一场
+      if (render.hitTest(tx, ty, cx - bw2 / 2, H * 0.72, bw2, bh2)) {
+        if (matchMode === 'league') startLeagueMatch(progress)
+        else startWCMatch(progress)
+        return
+      }
+    }
+    // 分享
+    if (render.hitTest(tx, ty, cx - bw2 / 2, H * 0.84, bw2, bh2)) { shareGame(); return }
+    // 返回
+    if (ty > H * 0.92) { scene = 'home'; return }
+  } else if (scene === 'chlAttack' && chlPhase === 'done') {
+    // 分享按钮（大号）
+    if (render.hitTest(tx, ty, cx - W*0.3, H*0.65-W*0.06, W*0.6, W*0.12)) {
+      shareChallengeAttack(); return
+    }
+    // 返回首页
+    if (ty > H * 0.79) { scene = 'home'; return }
+  } else if (scene === 'chlDefend' && chlPhase === 'done') {
+    if (render.hitTest(tx, ty, cx - W*0.25, H*0.55, W*0.5, W*0.11)) {
+      scene = 'chlResult'; return
+    }
+  } else if (scene === 'chlResult') {
+    var st2 = safeTop
+    if (chlRole === 'attack') {
+      // 发给好友
+      if (render.hitTest(tx, ty, cx - W*0.3, st2 + H*0.62 - W*0.06, W*0.6, W*0.12)) {
+        shareChallengeAttack(); return
+      }
+    } else {
+      // 分享结果
+      if (render.hitTest(tx, ty, cx - W*0.25, st2 + H*0.66, W*0.5, W*0.1)) {
+        shareChallengeResult(); return
+      }
+      // 换我来射
+      if (render.hitTest(tx, ty, cx - W*0.25, st2 + H*0.76, W*0.5, W*0.1)) {
+        initChlAttack(); return
+      }
+    }
+    if (ty > H * 0.89) { scene = 'home'; return }
+  }
+})
+
+wx.onTouchMove(function(e) {
+  if (!touchDown) return
+  var touch = e.touches[0]
+  touchX = touch.clientX; touchY = touch.clientY
+})
+
+wx.onTouchEnd(function(e) {
+  if (!touchDown) return
+  touchDown = false
+
+  var dx = touchX - touchStartX, dy = touchY - touchStartY
+  var dist = Math.sqrt(dx * dx + dy * dy)
+  var now = Date.now()
+
+  // 比赛中：射门/传球（滑动距离 = 力度）
+  if (scene === 'match' && ball.side === 'my' && ball.idx === ctrlIdx && matchCountdown <= 0) {
+    if (dist > 18 && (now - lastSwipeTime) > 250) {
+      lastSwipeTime = now
+      var power = Math.min(dist / 80, 1.5) // 滑动越长力度越大，上限1.5
+      if (dy < -10) {
+        myShoot(dx * 0.35, dy * 0.35, power)
+      } else {
+        myPass(dx, dy, power)
+      }
+    }
+  }
+
+  // 好友挑战射门
+  if (scene === 'chlAttack' && chlPhase === 'aim') {
+    if (dist > 18 && dy < -10 && (now - lastSwipeTime) > 250) {
+      lastSwipeTime = now
+      chlShoot(dx * 0.35, dy * 0.35)
+    }
+  }
+})
+
+// ==================== 比赛入口 ====================
+function startLeagueMatch(idx) {
+  matchMode = 'league'; matchIdx = idx
+  var opIdx = getLeagueOpponent(idx)
+  opponentTeam = TEAMS[opIdx]
+  matchDiff = LEAGUE_SCHEDULE[idx].diff
+  matchDuration = 90000 // 90秒
+  scene = 'prematch'
+}
+
+function startWCMatch(idx) {
+  matchMode = 'wc'; matchIdx = idx
+  opponentTeam = getWCOpponent(idx)
+  matchDiff = WC_SCHEDULE[idx].diff
+  matchDuration = 90000
+  scene = 'prematch'
+}
+
+// ==================== 分享 ====================
+function shareGame() {
+  var myT = getMyTeam()
+  var resultText = myGoals > opGoals ? '获胜！' : myGoals === opGoals ? '战平！' : '惜败！'
+  wx.shareAppMessage({
+    title: '绿茵逐梦·' + myT.city + '战队' + myGoals + ':' + opGoals + resultText + '来挑战⚽'
+  })
+}
+
+function shareChallengeAttack() {
+  var myT = getMyTeam()
+  wx.shareAppMessage({
+    title: '⚽点球大战！' + (D.nickname||'我') + '罚进' + chlGoals + '球，你能扑住吗？🧤',
+    query: chlId ? 'chlId=' + chlId : ''
+  })
+}
+
+function shareChallengeResult() {
+  var myT = getMyTeam()
+  wx.shareAppMessage({
+    title: '🧤点球大战！' + (D.nickname||'我') + '扑出' + chlSaves + '/' + CHL_TOTAL + '球！来战⚽',
+    query: ''
+  })
+}
+
+wx.onShareAppMessage(function() {
+  // 如果有挑战ID，带上
+  if (chlId && (scene === 'chlResult' || scene === 'chlAttack')) {
+    var myT = getMyTeam()
+    return {
+      title: myT.emoji + '好友挑战！我射进了' + chlGoals + '球，你能扑住吗？🧤',
+      query: 'chlId=' + chlId
+    }
+  }
+  return { title: '绿茵逐梦狂欢！苏超城市战队1v1对决 ⚽🏆', query: '' }
+})
+
+// ==================== 处理分享链接进入 ====================
+function checkLaunchChallenge() {
+  try {
+    var opts = wx.getLaunchOptionsSync()
+    if (opts.query && opts.query.chlId) {
+      pendingChallengeId = opts.query.chlId
+      loadAndStartDefense(pendingChallengeId)
+    }
+  } catch(e) {}
+}
+
+wx.onShow(function(res) {
+  if (res && res.query && res.query.chlId) {
+    var cid = res.query.chlId
+    if (cid && cid !== pendingChallengeId) {
+      pendingChallengeId = cid
+      loadAndStartDefense(cid)
+    }
+  }
+})
+
+function loadAndStartDefense(challengeId) {
+  wx.showLoading({ title: '加载挑战...' })
+  try {
+    wx.cloud.callFunction({
+      name: 'challenge',
+      data: { action: 'get', challengeId: challengeId },
+      success: function(res) {
+        wx.hideLoading()
+        if (res.result && res.result.code === 0 && res.result.data) {
+          var data = res.result.data
+          if (data.defenderSaves !== null && data.defenderSaves !== undefined) {
+            // 已经有人应战了，显示结果
+            chlData = data; chlRole = 'defend'
+            chlSaves = data.defenderSaves
+            chlGoals = data.goalsScored
+            scene = 'chlResult'
+          } else {
+            // 需要确认昵称/战队后进入防守
+            if (!D.nickname) {
+              askNickname(function() { initChlDefend(data) })
+            } else if (D.teamIdx < 0) {
+              scene = 'teamSelect'
+              // 选完队后需要手动进入，暂存数据
+              chlData = data
+            } else {
+              initChlDefend(data)
+            }
+          }
+        } else {
+          wx.showToast({ title: '挑战不存在或已过期', icon: 'none' })
+        }
+      },
+      fail: function() {
+        wx.hideLoading()
+        wx.showToast({ title: '加载失败', icon: 'none' })
+      }
+    })
+  } catch(e) {
+    wx.hideLoading()
+  }
+}
+
+// ==================== 启动 ====================
+checkLaunchChallenge()
+requestAnimationFrame(frame)
