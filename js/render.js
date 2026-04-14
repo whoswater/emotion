@@ -17,83 +17,102 @@ function roundRect(ctx, x, y, w, h, r) {
 // 比赛场地背景 — 俯视足球场，支持指定球场区域
 // bounds: {top, bottom, left, right} 球场边界
 function drawPitchBG(ctx, W, H, bounds) {
-  // 全屏深色底
-  ctx.fillStyle = '#071a07'
+  // 场外区域（与球场接近的绿色，减少色差）
+  ctx.fillStyle = '#278a3a'
   ctx.fillRect(0, 0, W, H)
 
-  if (!bounds) bounds = { top: 0, bottom: H, left: W * 0.03, right: W * 0.97 }
+  if (!bounds) bounds = { top: 0, bottom: H, left: W * 0.08, right: W * 0.92 }
   var t = bounds.top, b = bounds.bottom, l = bounds.left, r = bounds.right
   var pw = r - l, ph = b - t
   var cx = (l + r) / 2
 
-  // 球场内渐变绿（深色，不刺眼）
-  var bg = ctx.createLinearGradient(0, t, 0, b)
-  bg.addColorStop(0, '#0c3a14')
-  bg.addColorStop(0.5, '#104a1c')
-  bg.addColorStop(1, '#0a3210')
-  ctx.fillStyle = bg
-  ctx.fillRect(l - 2, t - 2, pw + 4, ph + 4)
+  // 球场内草地（比场外亮，明确区分）
+  ctx.fillStyle = '#309944'
+  ctx.fillRect(l, t, pw, ph)
 
-  // 草皮条纹（柔和）
+  // 草皮条纹
   var stripes = 10
   var sh = ph / stripes
   for (var i = 0; i < stripes; i++) {
-    ctx.fillStyle = i % 2 === 0 ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.02)'
+    ctx.fillStyle = i % 2 === 0 ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.04)'
     ctx.fillRect(l, t + i * sh, pw, sh)
   }
 
-  // 球场边缘渐暗
-  var edgeGrad = ctx.createLinearGradient(l, 0, l + pw * 0.06, 0)
-  edgeGrad.addColorStop(0, 'rgba(0,0,0,0.1)'); edgeGrad.addColorStop(1, 'transparent')
-  ctx.fillStyle = edgeGrad; ctx.fillRect(l, t, pw * 0.06, ph)
-  var edgeGrad2 = ctx.createLinearGradient(r, 0, r - pw * 0.06, 0)
-  edgeGrad2.addColorStop(0, 'rgba(0,0,0,0.1)'); edgeGrad2.addColorStop(1, 'transparent')
-  ctx.fillStyle = edgeGrad2; ctx.fillRect(r - pw * 0.06, t, pw * 0.06, ph)
-
-  // 边线
-  ctx.strokeStyle = 'rgba(255,255,255,0.15)'
-  ctx.lineWidth = 1.5
+  // 边线（白色，粗且醒目）
+  ctx.strokeStyle = 'rgba(255,255,255,0.7)'
+  ctx.lineWidth = 2
   ctx.strokeRect(l, t, pw, ph)
 
   // 中线
   var my = t + ph * 0.5
   ctx.beginPath(); ctx.moveTo(l, my); ctx.lineTo(r, my)
-  ctx.strokeStyle = 'rgba(255,255,255,0.1)'; ctx.lineWidth = 1; ctx.stroke()
+  ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 1.5; ctx.stroke()
 
-  // 中圈
-  var circR = Math.min(pw, ph) * 0.12
+  // 中圈（半径 9.15m/68m ≈ 13.5% 球场宽度）
+  var circR = pw * 0.135
   ctx.beginPath(); ctx.arc(cx, my, circR, 0, Math.PI * 2)
-  ctx.strokeStyle = 'rgba(255,255,255,0.08)'; ctx.stroke()
+  ctx.strokeStyle = 'rgba(255,255,255,0.4)'; ctx.lineWidth = 1; ctx.stroke()
   ctx.beginPath(); ctx.arc(cx, my, 3, 0, Math.PI * 2)
-  ctx.fillStyle = 'rgba(255,255,255,0.12)'; ctx.fill()
+  ctx.fillStyle = 'rgba(255,255,255,0.5)'; ctx.fill()
+
+  // 禁区尺寸按真实比例（40.32m/68m=59.3%宽, 16.5m/105m=15.7%深）
+  var gw = pw * 0.593, gh = ph * 0.157
+  ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 1
+  // 小禁区（18.32m/68m=26.9%宽, 5.5m/105m=5.2%深）
+  var sgw = pw * 0.269, sgh = ph * 0.052
 
   // 上方禁区（对手）
-  var gw = pw * 0.52, gh = ph * 0.1
-  ctx.strokeStyle = 'rgba(255,255,255,0.1)'; ctx.lineWidth = 1
   ctx.strokeRect(cx - gw / 2, t, gw, gh)
-  var sgw = pw * 0.26, sgh = ph * 0.04
   ctx.strokeRect(cx - sgw / 2, t, sgw, sgh)
+  // 罚球点（11m/105m=10.5%深）
+  ctx.beginPath(); ctx.arc(cx, t + ph * 0.105, 2.5, 0, Math.PI * 2)
+  ctx.fillStyle = 'rgba(255,255,255,0.25)'; ctx.fill()
+  // 罚球弧
+  ctx.beginPath(); ctx.arc(cx, t + ph * 0.105, ph * 0.087, 0.3 * Math.PI, 0.7 * Math.PI)
+  ctx.strokeStyle = 'rgba(255,255,255,0.15)'; ctx.stroke()
 
   // 下方禁区（我方）
+  ctx.strokeStyle = 'rgba(255,255,255,0.25)'
   ctx.strokeRect(cx - gw / 2, b - gh, gw, gh)
   ctx.strokeRect(cx - sgw / 2, b - sgh, sgw, sgh)
+  ctx.beginPath(); ctx.arc(cx, b - ph * 0.105, 2.5, 0, Math.PI * 2)
+  ctx.fillStyle = 'rgba(255,255,255,0.25)'; ctx.fill()
+  ctx.beginPath(); ctx.arc(cx, b - ph * 0.105, ph * 0.087, 1.3 * Math.PI, 1.7 * Math.PI)
+  ctx.strokeStyle = 'rgba(255,255,255,0.15)'; ctx.stroke()
 }
 
 // 球门（带网格）
 function drawGoal(ctx, x, y, w, h, flip) {
-  // 网格
-  ctx.strokeStyle = 'rgba(255,255,255,0.06)'
+  // 球网背景（半透明深色，体现网的深度感）
+  ctx.fillStyle = 'rgba(0,0,0,0.15)'
+  ctx.fillRect(x, y, w, h)
+
+  // 球网网格（密一点，更真实）
+  var cols = 12, rows = 4
+  ctx.strokeStyle = 'rgba(255,255,255,0.12)'
   ctx.lineWidth = 0.5
-  var cols = 10, rows = 3
+  // 竖线
   for (var i = 0; i <= cols; i++) {
     ctx.beginPath(); ctx.moveTo(x + w / cols * i, y); ctx.lineTo(x + w / cols * i, y + h); ctx.stroke()
   }
+  // 横线
   for (var j = 0; j <= rows; j++) {
     ctx.beginPath(); ctx.moveTo(x, y + h / rows * j); ctx.lineTo(x + w, y + h / rows * j); ctx.stroke()
   }
-  // 门框
-  ctx.strokeStyle = 'rgba(255,255,255,0.25)'
-  ctx.lineWidth = 3
+  // 斜线（交叉网纹，更像真实球网）
+  ctx.strokeStyle = 'rgba(255,255,255,0.06)'
+  for (var d = 0; d < cols + rows; d++) {
+    ctx.beginPath()
+    var sx = x + (d * w / cols), sy = y
+    var ex = sx - h * (w / cols) / (h / rows), ey = y + h
+    ctx.moveTo(clampV(sx, x, x+w), sy + Math.max(0, x - sx) * rows / cols * (h / rows / (w / cols)))
+    ctx.lineTo(clampV(ex, x, x+w), ey)
+    ctx.stroke()
+  }
+
+  // 门框（白色金属管）
+  ctx.strokeStyle = 'rgba(255,255,255,0.6)'
+  ctx.lineWidth = 3.5
   ctx.beginPath()
   if (flip) {
     ctx.moveTo(x, y + h); ctx.lineTo(x, y); ctx.lineTo(x + w, y); ctx.lineTo(x + w, y + h)
@@ -101,7 +120,19 @@ function drawGoal(ctx, x, y, w, h, flip) {
     ctx.moveTo(x, y); ctx.lineTo(x, y + h); ctx.lineTo(x + w, y + h); ctx.lineTo(x + w, y)
   }
   ctx.stroke()
+  // 门框高光
+  ctx.strokeStyle = 'rgba(255,255,255,0.15)'
+  ctx.lineWidth = 1
+  ctx.beginPath()
+  if (flip) {
+    ctx.moveTo(x + 2, y + h); ctx.lineTo(x + 2, y + 2); ctx.lineTo(x + w - 2, y + 2); ctx.lineTo(x + w - 2, y + h)
+  } else {
+    ctx.moveTo(x + 2, y); ctx.lineTo(x + 2, y + h - 2); ctx.lineTo(x + w - 2, y + h - 2); ctx.lineTo(x + w - 2, y)
+  }
+  ctx.stroke()
 }
+
+function clampV(v, min, max) { return v < min ? min : v > max ? max : v }
 
 // 球员 — 穿球衣的Q版小人，有立体感
 function drawPlayer(ctx, x, y, size, color, emoji, hasBall, teamName) {
@@ -156,10 +187,20 @@ function drawPlayer(ctx, x, y, size, color, emoji, hasBall, teamName) {
   ctx.arc(x, y - s * 0.35, s * 0.38, Math.PI * 1.15, Math.PI * 1.85)
   ctx.strokeStyle = '#3a2a1a'; ctx.lineWidth = s * 0.15; ctx.stroke()
 
-  // 表情 emoji（小一点放在脸上）
-  ctx.font = (s * 0.35) + 'px sans-serif'
-  ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
-  ctx.fillText(emoji || '😀', x, y - s * 0.32)
+  // 五官
+  var faceY = y - s * 0.35, faceR = s * 0.38
+  // 眼睛
+  ctx.fillStyle = '#fff'
+  ctx.beginPath(); ctx.arc(x - faceR * 0.3, faceY - faceR * 0.08, faceR * 0.18, 0, Math.PI * 2); ctx.fill()
+  ctx.beginPath(); ctx.arc(x + faceR * 0.3, faceY - faceR * 0.08, faceR * 0.18, 0, Math.PI * 2); ctx.fill()
+  // 瞳孔
+  ctx.fillStyle = '#222'
+  ctx.beginPath(); ctx.arc(x - faceR * 0.28, faceY - faceR * 0.06, faceR * 0.09, 0, Math.PI * 2); ctx.fill()
+  ctx.beginPath(); ctx.arc(x + faceR * 0.32, faceY - faceR * 0.06, faceR * 0.09, 0, Math.PI * 2); ctx.fill()
+  // 微笑
+  ctx.beginPath()
+  ctx.arc(x, faceY + faceR * 0.1, faceR * 0.22, 0.1 * Math.PI, 0.9 * Math.PI)
+  ctx.strokeStyle = '#a0522d'; ctx.lineWidth = s * 0.06; ctx.lineCap = 'round'; ctx.stroke()
 
   // 脚下有球
   if (hasBall) {
@@ -211,53 +252,37 @@ function drawBall(ctx, x, y, size, flying) {
 // 菜单页足球场背景（较暗、带灯光）
 function drawMenuBG(ctx, W, H, t) {
   var bg = ctx.createLinearGradient(0, 0, 0, H)
-  bg.addColorStop(0, '#071a07')
-  bg.addColorStop(0.4, '#0d2b12')
-  bg.addColorStop(1, '#061506')
+  bg.addColorStop(0, '#2d7a42')
+  bg.addColorStop(1, '#3a9952')
   ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H)
-
-  // 草皮纹
-  var sh = H / 14
-  for (var i = 0; i < 14; i++) {
-    if (i % 2 === 0) {
-      ctx.fillStyle = 'rgba(30,90,30,0.04)'
-      ctx.fillRect(0, i * sh, W, sh)
-    }
-  }
-
-  // 球场线（装饰）
-  var cx = W / 2, cy = H * 0.45
-  ctx.beginPath(); ctx.arc(cx, cy, W * 0.18, 0, Math.PI * 2)
-  ctx.strokeStyle = 'rgba(255,255,255,0.04)'; ctx.lineWidth = 1; ctx.stroke()
-
-  // 灯光
-  if (typeof t === 'number') {
-    for (var li = 0; li < 3; li++) {
-      var lx = W * (0.2 + li * 0.3) + Math.sin(t * 0.4 + li * 2) * W * 0.02
-      var grad = ctx.createRadialGradient(lx, -10, 0, lx, H * 0.4, W * 0.35)
-      grad.addColorStop(0, 'rgba(150,255,150,0.03)')
-      grad.addColorStop(1, 'transparent')
-      ctx.fillStyle = grad; ctx.fillRect(0, 0, W, H)
-    }
-  }
 }
 
 // 渐变按钮
 function drawButton(ctx, x, y, w, h, text, colors, textColor) {
-  ctx.fillStyle = 'rgba(0,0,0,0.3)'
-  roundRect(ctx, x, y + 3, w, h, h / 2); ctx.fill()
+  // 阴影
+  ctx.fillStyle = 'rgba(0,0,0,0.4)'
+  roundRect(ctx, x + 1, y + 3, w, h, h / 2); ctx.fill()
 
+  // 按钮主体
   var grad = ctx.createLinearGradient(x, y, x + w, y + h)
   grad.addColorStop(0, colors[0]); grad.addColorStop(1, colors[1])
   ctx.fillStyle = grad
   roundRect(ctx, x, y, w, h, h / 2); ctx.fill()
 
-  ctx.fillStyle = 'rgba(255,255,255,0.08)'
+  // 高光
+  ctx.fillStyle = 'rgba(255,255,255,0.15)'
   roundRect(ctx, x + 2, y + 2, w - 4, h * 0.4, h / 2); ctx.fill()
 
-  ctx.fillStyle = textColor || '#fff'
-  ctx.font = 'bold ' + Math.floor(h * 0.36) + 'px sans-serif'
+  // 边框
+  ctx.strokeStyle = 'rgba(255,255,255,0.12)'; ctx.lineWidth = 1
+  roundRect(ctx, x, y, w, h, h / 2); ctx.stroke()
+
+  // 文字阴影 + 文字
+  ctx.font = 'bold ' + Math.floor(h * 0.38) + 'px sans-serif'
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
+  ctx.fillStyle = 'rgba(0,0,0,0.3)'
+  ctx.fillText(text, x + w / 2 + 1, y + h / 2 + 1)
+  ctx.fillStyle = textColor || '#fff'
   ctx.fillText(text, x + w / 2, y + h / 2)
 }
 
