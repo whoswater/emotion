@@ -1,13 +1,16 @@
 // ========== 绿茵逐梦狂欢 · 1v1即时对抗足球赛 ==========
-var render = null, audio = null
+var render = null, audio = null, ad = null
 try { render = require('./js/render') } catch(e) { console.error('render fail', e) }
 try { audio = require('./js/audio') } catch(e) { console.error('audio fail', e) }
+try { ad = require('./js/ad') } catch(e) { console.error('ad fail', e) }
 if (!render) render = { drawPitchBG:function(){}, drawGoal:function(){}, drawPlayer:function(){},
   drawBall:function(){}, drawMenuBG:function(){}, drawButton:function(){}, hitTest:function(){return false},
   drawText:function(){}, drawStrokeText:function(){}, drawTeamBadge:function(){},
   drawProgressBar:function(){}, roundRect:function(){}, lightenColor:function(c){return c} }
 if (!audio) audio = { startBGM:function(){}, stopBGM:function(){}, playKick:function(){},
   playGoal:function(){}, playMiss:function(){}, playWhistle:function(){}, playTick:function(){}, playCheer:function(){} }
+if (!ad) ad = { initAds:function(){}, showRewardedVideo:function(cb){if(cb)cb(false)},
+  showBanner:function(){}, hideBanner:function(){}, destroyBanner:function(){}, createBannerAd:function(){} }
 
 var CLOUD_ENV = 'cloud1-9gg9bbsw4c401373'
 try { if (wx.cloud) wx.cloud.init({ env: CLOUD_ENV }) } catch(e) {}
@@ -224,6 +227,7 @@ var goalFlashTime = 0
 var goalFlashSide = ''
 var matchPaused = false
 var matchCountdown = 0    // 开球倒计时
+var adDoubleUsed = false  // 本场是否已用过广告双倍奖励
 
 // 比赛人数模式
 var matchTeamSize = 11 // 2 或 11
@@ -521,7 +525,7 @@ function drawTraining() {
     var cy = cardY + i * (cardH + 12)
     var lv = D.stats[s.key] || 1
     var maxLv = 5
-    var cost = lv * 20
+    var cost = lv * 30 + 20
 
     // 卡片背景
     ctx.fillStyle = 'rgba(255,255,255,0.03)'
@@ -557,9 +561,8 @@ function drawTraining() {
       if (D.coins >= cost) {
         render.drawButton(ctx, ubx, uby, ubw, ubh, '升级 ' + cost + '💰', ['#2E7D32', '#43A047'])
       } else {
-        ctx.fillStyle = 'rgba(255,255,255,0.04)'
-        render.roundRect(ctx, ubx, uby, ubw, ubh, ubh / 2); ctx.fill()
-        render.drawText(ctx, cost + '💰', ubx + ubw / 2, uby + ubh / 2, (W * 0.024) + 'px sans-serif', 'rgba(255,255,255,0.4)')
+        // 金币不足时显示看广告赚金币按钮
+        render.drawButton(ctx, ubx, uby, ubw, ubh, '🎬 +15💰', ['#FF6F00', '#FFA000'])
       }
     } else {
       render.drawText(ctx, '已满级', W * 0.78, cy + 44, (W * 0.026) + 'px sans-serif', '#ffd700')
@@ -570,9 +573,9 @@ function drawTraining() {
   var taskY = cardY + 3 * (cardH + 12) + 10
   render.drawText(ctx, '📋 每日任务', cx, taskY, 'bold ' + (W * 0.035) + 'px sans-serif', 'rgba(255,255,255,0.6)')
   var tasks = [
-    { id:'login', name:'每日登录', reward: 10, done: D.dailyDone.login },
-    { id:'match1', name:'完成1场比赛', reward: 15, done: D.dailyDone.match1 },
-    { id:'win1', name:'赢得1场比赛', reward: 25, done: D.dailyDone.win1 }
+    { id:'login', name:'每日登录', reward: 5, done: D.dailyDone.login },
+    { id:'match1', name:'完成1场比赛', reward: 5, done: D.dailyDone.match1 },
+    { id:'win1', name:'赢得1场比赛', reward: 10, done: D.dailyDone.win1 }
   ]
   for (var ti = 0; ti < tasks.length; ti++) {
     var task = tasks[ti]
@@ -585,7 +588,7 @@ function drawTraining() {
 
   // 领取每日登录
   if (!D.dailyDone.login) {
-    D.dailyDone.login = true; D.coins += 10
+    D.dailyDone.login = true; D.coins += 5
     saveField('dailyDone_' + todayStr(), D.dailyDone); saveField('coins', D.coins)
   }
 }
@@ -1700,20 +1703,28 @@ function ballSaved(side) {
 var lastKickSide = 'my'
 
 function ballMissed() {
-  // 出界 → 球权交给对方（掷界外球/球门球）
+  // 出界 → 冻结0.8秒后交给对方（掷界外球/球门球）
   var giveTo = lastKickSide === 'my' ? 'op' : 'my'
-  // 球放到出界位置附近，交给对方最近的球员
   var bx = clamp(ball.x, PL + 20, PR - 20)
   var by = clamp(ball.y, py(0.1), py(0.9))
-  var team = giveTo === 'my' ? myTeam : opTeam
-  var bestIdx = 0, bestDist = 999
-  for (var i = 0; i < gkIdx(); i++) {
-    var d = dist2({x:bx, y:by}, team[i])
-    if (d < bestDist) { bestDist = d; bestIdx = i }
-  }
-  ball.side = giveTo; ball.idx = bestIdx
+  // 先冻结球
   ball.x = bx; ball.y = by; ball.vx = 0; ball.vy = 0
+  ball.side = 'freeze'; ball.idx = -1
+  goalFreezeUntil = Date.now() + 800
   floats.push({ x: bx, y: by - 20, text: '出界', color: 'rgba(255,255,255,0.5)', born: Date.now() })
+  // 0.8秒后恢复比赛，球权交给对方
+  setTimeout(function() {
+    if (scene !== 'match') return
+    var team = giveTo === 'my' ? myTeam : opTeam
+    var bestIdx = 0, bestDist = 999
+    for (var i = 0; i < gkIdx(); i++) {
+      var d = dist2({x:bx, y:by}, team[i])
+      if (d < bestDist) { bestDist = d; bestIdx = i }
+    }
+    ball.side = giveTo; ball.idx = bestIdx
+    if (giveTo === 'my') ctrlIdx = bestIdx
+    goalFreezeUntil = 0
+  }, 800)
 }
 
 function endMatch() {
@@ -1726,12 +1737,12 @@ function endMatch() {
   var isWin = myGoals > opGoals
 
   // 奖励金币
-  var reward = isWin ? (myGoals * 5 + 15) : 5
+  var reward = isWin ? (myGoals * 3 + 8) : 2
   D.coins += reward; saveField('coins', D.coins)
 
   // 日常任务
-  if (!D.dailyDone.match1) { D.dailyDone.match1 = true; D.coins += 15; saveField('coins', D.coins) }
-  if (isWin && !D.dailyDone.win1) { D.dailyDone.win1 = true; D.coins += 25; saveField('coins', D.coins) }
+  if (!D.dailyDone.match1) { D.dailyDone.match1 = true; D.coins += 5; saveField('coins', D.coins) }
+  if (isWin && !D.dailyDone.win1) { D.dailyDone.win1 = true; D.coins += 10; saveField('coins', D.coins) }
   saveField('dailyDone_' + todayStr(), D.dailyDone)
 
   if (matchMode === 'league') {
@@ -1758,7 +1769,9 @@ function endMatch() {
   if (!hasPlayedBefore) { hasPlayedBefore = true; wx.setStorageSync('hasPlayed', true) }
 
   // 排行榜已移除
+  adDoubleUsed = false  // 重置广告双倍状态
   scene = 'matchResult'
+  ad.showBanner()  // 结算页展示Banner广告
 }
 
 // ---- 比赛渲染（11v11）----
@@ -2059,8 +2072,17 @@ function drawMatchResult() {
 
   // 奖励
   var rewardY = safeTop + H * 0.56
-  var reward = isWin ? (myGoals * 5 + 15) : 5
+  var reward = isWin ? (myGoals * 3 + 8) : 2
   render.drawText(ctx, '💰 获得 ' + reward + ' 金币', cx, rewardY, 'bold ' + (W * 0.035) + 'px sans-serif', '#ffd700')
+
+  // 激励视频：双倍金币按钮
+  if (!adDoubleUsed) {
+    var adBtnW = W * 0.45, adBtnH = W * 0.09
+    var adBtnX = cx - adBtnW / 2, adBtnY = rewardY + 14
+    render.drawButton(ctx, adBtnX, adBtnY, adBtnW, adBtnH, '🎬 看视频 双倍奖励', ['#FF6F00', '#FFA000'])
+  } else {
+    render.drawText(ctx, '💰 额外获得 ' + reward + ' 金币！', cx, rewardY + 28, (W * 0.028) + 'px sans-serif', '#4CAF50')
+  }
 
   // 赛事进度
   var schedule = matchMode === 'league' ? LEAGUE_SCHEDULE : WC_SCHEDULE
@@ -2766,12 +2788,20 @@ wx.onTouchStart(function(e) {
     for (var si = 0; si < 3; si++) {
       var lv = D.stats[statKeys[si]] || 1
       if (lv >= 5) continue
-      var cost = lv * 20
+      var cost = lv * 30 + 20
       var ubw = W * 0.18, ubh = 28
       var ubx = W * 0.78 - ubw / 2, uby = cardY + si * (cardH + 12) + 30
-      if (D.coins >= cost && render.hitTest(tx, ty, ubx, uby, ubw, ubh)) {
-        D.stats[statKeys[si]]++; D.coins -= cost
-        saveField('stats', D.stats); saveField('coins', D.coins); return
+      if (render.hitTest(tx, ty, ubx, uby, ubw, ubh)) {
+        if (D.coins >= cost) {
+          D.stats[statKeys[si]]++; D.coins -= cost
+          saveField('stats', D.stats); saveField('coins', D.coins)
+        } else {
+          // 金币不足，看广告赚15金币
+          ad.showRewardedVideo(function(completed) {
+            if (completed) { D.coins += 15; saveField('coins', D.coins) }
+          })
+        }
+        return
       }
     }
   } else if (scene === 'leagueMap') {
@@ -2853,6 +2883,23 @@ wx.onTouchStart(function(e) {
     var schedule = matchMode === 'league' ? LEAGUE_SCHEDULE : WC_SCHEDULE
     var progress = matchMode === 'league' ? D.leagueWins.length : D.wcWins.length
 
+    // 激励视频：双倍金币点击
+    if (!adDoubleUsed) {
+      var isWinAd = myGoals > opGoals
+      var adReward = isWinAd ? (myGoals * 5 + 15) : 5
+      var adBtnW2 = W * 0.45, adBtnH2 = W * 0.09
+      var adBtnX2 = cx - adBtnW2 / 2, adBtnY2 = safeTop + H * 0.56 + 14
+      if (render.hitTest(tx, ty, adBtnX2, adBtnY2, adBtnW2, adBtnH2)) {
+        ad.showRewardedVideo(function(completed) {
+          if (completed) {
+            adDoubleUsed = true
+            D.coins += adReward; saveField('coins', D.coins)
+          }
+        })
+        return
+      }
+    }
+
     // 失败重来
     var isWinOrDraw = myGoals >= opGoals
     var lSched = matchMode === 'league' ? LEAGUE_SCHEDULE[matchIdx] : null
@@ -2872,6 +2919,7 @@ wx.onTouchStart(function(e) {
     }
     if (needRetry2) {
       if (render.hitTest(tx, ty, cx - bw2 / 2, H * 0.72, bw2, bh2)) {
+        ad.hideBanner()
         if (matchMode === 'league') {
           // 两回合淘汰赛失败：回退到第一回合重赛
           if (lSched && lSched.leg === 2) {
@@ -2886,6 +2934,7 @@ wx.onTouchStart(function(e) {
     } else if (progress < schedule.length) {
       // 下一场
       if (render.hitTest(tx, ty, cx - bw2 / 2, H * 0.70, bw2, bh2)) {
+        ad.hideBanner()
         if (matchMode === 'league') startLeagueMatch(progress)
         else startWCMatch(progress)
         return
@@ -2894,7 +2943,7 @@ wx.onTouchStart(function(e) {
     // 分享
     if (render.hitTest(tx, ty, cx - bw2 / 2, H * 0.82, bw2, bh2)) { shareGame(); return }
     // 返回
-    if (ty > H * 0.90) { scene = 'home'; return }
+    if (ty > H * 0.90) { ad.hideBanner(); scene = 'home'; return }
   } else if (scene === 'chlAttack' && chlPhase === 'done') {
     // 分享按钮（大号）
     if (render.hitTest(tx, ty, cx - W*0.3, H*0.65-W*0.06, W*0.6, W*0.12)) {
@@ -3098,5 +3147,6 @@ function loadAndStartDefense(challengeId) {
 }
 
 // ==================== 启动 ====================
+ad.initAds()
 checkLaunchChallenge()
 requestAnimationFrame(frame)
