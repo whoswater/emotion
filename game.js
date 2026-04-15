@@ -2312,8 +2312,11 @@ function initChlAttack() {
 
 function resetChlBallAttack() {
   chlBall.x = W / 2; chlBall.y = penaltySpotY
-  chlBall.vx = 0; chlBall.vy = 0
+  chlBall.vx = 0; chlBall.vy = 0; chlBall.spin = 0
   chlGKAIX = W / 2
+  // 重置操控状态，防止上一球的方向残留
+  joystick.active = false; joystick.touchId = -1; joystick.dx = 0; joystick.dy = 0
+  shootBtnPressed = false; shootBtnTouchId = -1; shootChargeStart = 0
 }
 
 function updateChlAttack(dt) {
@@ -3241,8 +3244,8 @@ wx.onTouchEnd(function(e) {
   var dist = Math.sqrt(dx * dx + dy * dy)
   var now = Date.now()
 
-  // 摇杆 / 按钮释放
-  if (scene === 'match' || scene === 'chlAttack' || scene === 'chlDefend') {
+  // 摇杆 / 按钮释放（match模式，点球模式有自己的处理）
+  if (scene === 'match') {
     for (var ti = 0; ti < e.changedTouches.length; ti++) {
       var ct = e.changedTouches[ti]
       if (ct.identifier === joystick.touchId) {
@@ -3292,6 +3295,14 @@ wx.onTouchEnd(function(e) {
       }
     }
   }
+  // 扑救模式：摇杆释放
+  if (scene === 'chlDefend') {
+    for (var dti2 = 0; dti2 < e.changedTouches.length; dti2++) {
+      if (e.changedTouches[dti2].identifier === joystick.touchId) {
+        joystick.active = false; joystick.touchId = -1; joystick.dx = 0; joystick.dy = 0
+      }
+    }
+  }
 })
 
 // ==================== 比赛入口 ====================
@@ -3325,14 +3336,14 @@ function shareGame() {
   var opT = opponentTeam || { city:'对手' }
   var resultText = myGoals > opGoals ? '获胜！' : myGoals === opGoals ? '战平！' : '惜败！'
   wx.shareAppMessage({
-    title: '绿茵逐梦·' + myT.city + ' ' + myGoals + ':' + opGoals + ' ' + opT.city + ' ' + resultText + '来挑战⚽'
+    title: '绿茵逐梦 · ' + myT.city + ' ' + myGoals + ':' + opGoals + ' ' + opT.city + ' ' + resultText
   })
 }
 
 function shareChallengeAttack() {
   var myT = getMyTeam()
   wx.shareAppMessage({
-    title: '⚽点球挑战！' + (D.nickname||'我') + '踢进了' + chlGoals + '/' + CHL_TOTAL + '球，换你来当守门员扑救！🧤',
+    title: '绿茵逐梦 · ' + (D.nickname||'我') + '的点球成绩 ' + chlGoals + '/' + CHL_TOTAL,
     query: chlId ? 'chlId=' + chlId : ''
   })
 }
@@ -3340,7 +3351,7 @@ function shareChallengeAttack() {
 function shareChallengeResult() {
   var myT = getMyTeam()
   wx.shareAppMessage({
-    title: '🧤点球大战！' + (D.nickname||'我') + '扑出' + chlSaves + '/' + CHL_TOTAL + '球！来战⚽',
+    title: '绿茵逐梦 · ' + (D.nickname||'我') + '扑出 ' + chlSaves + '/' + CHL_TOTAL + ' 球',
     query: ''
   })
 }
@@ -3350,7 +3361,7 @@ wx.onShareAppMessage(function() {
   if (chlId && (scene === 'chlResult' || scene === 'chlAttack')) {
     var myT = getMyTeam()
     return {
-      title: '⚽点球挑战！' + (D.nickname||'我') + '踢进了' + chlGoals + '/' + CHL_TOTAL + '球，换你来当守门员扑救！🧤',
+      title: '绿茵逐梦 · ' + (D.nickname||'我') + '的点球成绩 ' + chlGoals + '/' + CHL_TOTAL,
       query: 'chlId=' + chlId
     }
   }
