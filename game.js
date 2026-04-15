@@ -230,7 +230,7 @@ var matchCountdown = 0    // 开球倒计时
 var adDoubleUsed = false  // 本场是否已用过广告双倍奖励
 
 // 比赛人数模式
-var matchTeamSize = 11 // 2 或 11
+var matchTeamSize = 5 // 5v5 默认
 
 // 5v5 阵型（4球员 + 1守门员，2-1-1）
 var FORMATION_2 = [
@@ -265,12 +265,36 @@ var opTeam = []   // 同上
 var ctrlIdx = 0   // 我方当前控制的球员索引（不含GK）
 // 安全设置ctrlIdx，永远不选GK
 function setCtrl(idx) { if (idx >= 0 && idx < gkIdx()) ctrlIdx = idx }
+// 切换到离球最近的队友（排除当前控制的）
+function switchToNearest() {
+  var bestIdx = -1, bestD = 99999
+  for (var i = 0; i < gkIdx(); i++) {
+    if (i === ctrlIdx) continue
+    var d = dist2(myTeam[i], ball)
+    if (d < bestD) { bestD = d; bestIdx = i }
+  }
+  if (bestIdx >= 0) {
+    setCtrl(bestIdx)
+    floats.push({ x: myTeam[bestIdx].x, y: myTeam[bestIdx].y - 20, text: '切换#' + myTeam[bestIdx].num, color: '#1E90FF', born: Date.now() })
+  }
+}
 var ball = { x:0, y:0, vx:0, vy:0, side:'', idx:-1, flyTarget:-1 }
 // side: 'my','op','','fly'  idx: 持球球员索引
 
 // 控制
 var touchDown = false, touchX = 0, touchY = 0, touchStartX = 0, touchStartY = 0
 var playerGrabbed = false // 5v5模式：是否已选中球员
+
+// 虚拟摇杆 + 按钮
+var joystick = { active: false, touchId: -1, baseX: 0, baseY: 0, stickX: 0, stickY: 0, dx: 0, dy: 0 }
+var JOY_RADIUS = 50, JOY_STICK_R = 22
+var BTN_SHOOT = { x: 0, y: 0, r: 30 }
+var BTN_PASS = { x: 0, y: 0, r: 24 }
+var BTN_SWITCH = { x: 0, y: 0, r: 22 }
+var shootBtnPressed = false, passBtnPressed = false, switchBtnPressed = false
+var shootBtnTouchId = -1, passBtnTouchId = -1, switchBtnTouchId = -1
+var shootChargeStart = 0, passChargeStart = 0 // 蓄力开始时间
+var CHARGE_MAX_MS = 800 // 最大蓄力时间ms
 var leagueScrollY = 0 // 联赛地图滚动偏移
 // swipeVX/VY 已移除（未使用）
 
@@ -435,7 +459,7 @@ function drawHome() {
   }
 
   // 底部提示
-  render.drawText(ctx, '滑动操控 · 即时对抗 · 90秒一局', cx, H * 0.88, (W * 0.025) + 'px sans-serif', 'rgba(255,255,255,0.7)')
+  render.drawText(ctx, '摇杆操控 · 即时对抗 · 90秒一局', cx, H * 0.88, (W * 0.025) + 'px sans-serif', 'rgba(255,255,255,0.7)')
 }
 
 // ==================== 战队选择（支持苏超/世界杯两种模式）====================
@@ -914,10 +938,10 @@ function drawPrematch() {
   var lx = W * 0.27  // 左栏中心
   render.drawText(ctx, '🎮 操作', lx, cardY + 18, 'bold '+(W*0.028)+'px sans-serif', '#fff')
   var ops = [
-    { text:'👆 拖动球员移动', color:'#4CAF50' },
-    { text:'⬆️ 上滑射门', color:'#E53935' },
-    { text:'↗️ 斜滑弧线球', color:'#FF9800' },
-    { text:'↔️ 横滑传球', color:'#1E90FF' },
+    { text:'🕹️ 摇杆移动+瞄准', color:'#4CAF50' },
+    { text:'⚽ 长按射门蓄力', color:'#E53935' },
+    { text:'📨 长按传球蓄力', color:'#1E90FF' },
+    { text:'🔄 切换键换人', color:'#1E90FF' },
     { text:'🛡️ 靠近自动抢断', color:'#ffd700' }
   ]
   for (var oi = 0; oi < ops.length; oi++) {
@@ -928,28 +952,18 @@ function drawPrematch() {
   var rx = W * 0.73  // 右栏中心
   render.drawText(ctx, '🔄 控制权', rx, cardY + 18, 'bold '+(W*0.028)+'px sans-serif', '#fff')
   var ctrls = [
-    { text:'点击队友切换', color:'#4CAF50' },
+    { text:'切换键换最近队友', color:'#4CAF50' },
     { text:'传球后自动切', color:'#ffd700' },
-    { text:'你抢断时自动切', color:'#FF9800' },
-    { text:'其他情况不打断', color:'#1E90FF' },
+    { text:'抢断时自动切', color:'#FF9800' },
+    { text:'也可点击队友切换', color:'rgba(255,255,255,0.5)' },
     { text:'⏱ 90秒一局', color:'rgba(255,255,255,0.5)' }
   ]
   for (var ci = 0; ci < ctrls.length; ci++) {
     render.drawText(ctx, ctrls[ci].text, rx, cardY + 40 + ci * 24, (W*0.024)+'px sans-serif', ctrls[ci].color)
   }
 
-  // 模式选择按钮
-  var modeBtnW = W * 0.38, modeBtnH = W * 0.1
-  var modeY = H * 0.66
-  var is2 = matchTeamSize === 5
-  // 5v5
-  render.drawButton(ctx, cx - modeBtnW - 6, modeY, modeBtnW, modeBtnH,
-    '👤 5v5 快速赛', is2 ? ['#2E7D32','#4CAF50'] : ['rgba(255,255,255,0.06)','rgba(255,255,255,0.03)'],
-    is2 ? '#fff' : 'rgba(255,255,255,0.4)')
-  // 11v11
-  render.drawButton(ctx, cx + 6, modeY, modeBtnW, modeBtnH,
-    '⚽ 11v11 正式赛', !is2 ? ['#1565C0','#1E88E5'] : ['rgba(255,255,255,0.06)','rgba(255,255,255,0.03)'],
-    !is2 ? '#fff' : 'rgba(255,255,255,0.4)')
+  // 模式标签
+  render.drawText(ctx, '5v5 快速赛', cx, H * 0.68, 'bold ' + (W * 0.03) + 'px sans-serif', 'rgba(255,255,255,0.5)')
 
   // 开球按钮
   var bw = W * 0.5, bh = W * 0.1
@@ -970,6 +984,8 @@ function initMatch() {
   matchCdNext = Date.now() + 800 // 第一次倒计时在800ms后
   particles = []; floats = []
   guideStep = 0
+  joystick.active = false; joystick.touchId = -1; joystick.dx = 0; joystick.dy = 0
+  shootBtnPressed = false; passBtnPressed = false; switchBtnPressed = false
   initMatchPlayers()
   audio.startBGM()
 }
@@ -986,8 +1002,8 @@ function initMatchPlayers() {
     // 将阵型 hy 映射到己方半场：我方 0.5~1.0，对方 0.0~0.5
     var myKickoffY = 0.5 + f.hy * 0.5   // 我方：hy=0→中线，hy=1→底线
     var opKickoffY = 0.5 - f.hy * 0.5   // 对方：hy=0→中线，hy=1→顶线
-    myTeam.push({ x: px(f.hx), y: py(myKickoffY), num: f.num, role: f.role })
-    opTeam.push({ x: px(f.hx), y: py(opKickoffY), num: f.num, role: f.role })
+    myTeam.push({ x: px(f.hx), y: py(myKickoffY), num: f.num, role: f.role, prevX: px(f.hx), prevY: py(myKickoffY) })
+    opTeam.push({ x: px(f.hx), y: py(opKickoffY), num: f.num, role: f.role, prevX: px(f.hx), prevY: py(opKickoffY) })
   }
   ctrlIdx = 0
   ball.x = px(0.5); ball.y = py(0.5); ball.vx = 0; ball.vy = 0; ball.spin = 0; ball.side = ''; ball.idx = -1
@@ -1014,21 +1030,26 @@ function updateMatch(dt) {
   matchTime -= dt
   if (matchTime <= 0) { matchTime = 0; endMatch(); return }
 
+  // 保存上一帧位置（用于朝向和跑动动画）
+  for (var pi2 = 0; pi2 < myTeam.length; pi2++) { myTeam[pi2].prevX = myTeam[pi2].x; myTeam[pi2].prevY = myTeam[pi2].y }
+  for (var pi3 = 0; pi3 < opTeam.length; pi3++) { opTeam[pi3].prevX = opTeam[pi3].x; opTeam[pi3].prevY = opTeam[pi3].y }
+
   var spdStat = getStatValue('spd'), atkStat = getStatValue('atk'), defStat = getStatValue('def')
   var dtF = dt / 16 // 帧因子
 
-  // ==== 我方控制球员移动 ====
+  // ==== 我方控制球员移动（虚拟摇杆） ====
   var cp = myTeam[ctrlIdx]
   var isDribbling = ball.side === 'my' && ball.idx === ctrlIdx
-  if (touchDown && playerGrabbed) {
-    var dx = touchX - cp.x, dy = touchY - cp.y
-    var dist = Math.sqrt(dx * dx + dy * dy)
-    if (dist > 3) {
-      // 带球速度约为无球的70%
-      var baseSpeed = isDribbling ? (0.95 + spdStat * 0.18) : (1.3 + spdStat * 0.25)
-      var speed = baseSpeed * Math.min(dist / 40, 1.6) * dtF
-      var mvx = (dx / dist) * Math.min(speed, dist)
-      var mvy = (dy / dist) * Math.min(speed, dist)
+  if (joystick.active) {
+    var jdx = joystick.dx, jdy = joystick.dy
+    var jdist = Math.sqrt(jdx * jdx + jdy * jdy)
+    if (jdist > 3) {
+      // 摇杆偏移量映射到速度（偏移越大速度越快）
+      var pct = Math.min(jdist / JOY_RADIUS, 1.0)
+      var baseSpeed = isDribbling ? (1.07 + spdStat * 0.205) : (1.3 + spdStat * 0.25)
+      var speed = baseSpeed * (0.4 + pct * 1.2) * dtF
+      var mvx = (jdx / jdist) * speed
+      var mvy = (jdy / jdist) * speed
       // 碰撞避让：遇到其他球员时绕开
       var allPlayers = []
       for (var ci = 0; ci < myTeam.length; ci++) { if (ci !== ctrlIdx) allPlayers.push(myTeam[ci]) }
@@ -1039,7 +1060,6 @@ function updateMatch(dt) {
         var odx = newX - ob.x, ody = newY - ob.y
         var od = Math.sqrt(odx * odx + ody * ody)
         if (od < PLAYER_R * 2.2 && od > 0.1) {
-          // 推开方向：沿碰撞法线滑动
           var pushStr = (PLAYER_R * 2.2 - od) / (PLAYER_R * 2.2)
           mvx += (odx / od) * pushStr * speed * 0.6
           mvy += (ody / od) * pushStr * speed * 0.6
@@ -1730,6 +1750,9 @@ function ballMissed() {
 function endMatch() {
   audio.stopBGM(); audio.playWhistle()
   goalFreezeUntil = 0
+  // 重置摇杆/按钮状态
+  joystick.active = false; joystick.touchId = -1; joystick.dx = 0; joystick.dy = 0
+  shootBtnPressed = false; passBtnPressed = false; switchBtnPressed = false
   try { wx.vibrateShort({ type: 'heavy' }) } catch(e) {}
 
   // 保存比赛结果
@@ -1803,10 +1826,12 @@ function drawMatch() {
   // 所有实体按Y坐标排序渲染（正确的前后遮挡关系）
   var entities = []
   for (var oi=0;oi<opTeam.length;oi++) {
-    entities.push({type:'player',x:opTeam[oi].x,y:opTeam[oi].y,color:opColor,num:opTeam[oi].num,hl:false,hb:ball.side==='op'&&ball.idx===oi,gk:oi===gkIdx()})
+    var op=opTeam[oi]
+    entities.push({type:'player',x:op.x,y:op.y,color:opColor,num:op.num,hl:false,hb:ball.side==='op'&&ball.idx===oi,gk:oi===gkIdx(),vx:op.x-(op.prevX||op.x),vy:op.y-(op.prevY||op.y),role:op.role})
   }
   for (var mi=0;mi<myTeam.length;mi++) {
-    entities.push({type:'player',x:myTeam[mi].x,y:myTeam[mi].y,color:myC,num:myTeam[mi].num,hl:mi===ctrlIdx&&mi<gkIdx(),hb:ball.side==='my'&&ball.idx===mi,gk:mi===gkIdx()})
+    var mp=myTeam[mi]
+    entities.push({type:'player',x:mp.x,y:mp.y,color:myC,num:mp.num,hl:mi===ctrlIdx&&mi<gkIdx(),hb:ball.side==='my'&&ball.idx===mi,gk:mi===gkIdx(),vx:mp.x-(mp.prevX||mp.x),vy:mp.y-(mp.prevY||mp.y),role:mp.role})
   }
   if (ball.side !== 'freeze') {
     entities.push({type:'ball',x:ball.x,y:ball.y})
@@ -1825,7 +1850,7 @@ function drawMatch() {
         }
       }
     } else {
-      try { drawMiniPlayer(ctx,e.x,e.y,PLAYER_R,e.color,e.num,e.hl,e.hb,e.gk) }
+      try { drawMiniPlayer(ctx,e.x,e.y,PLAYER_R,e.color,e.num,e.hl,e.hb,e.gk,e.vx,e.vy,e.role) }
       catch(err) { ctx.fillStyle=e.color;ctx.beginPath();ctx.arc(e.x,e.y,PLAYER_R,0,Math.PI*2);ctx.fill() }
     }
   }
@@ -1838,18 +1863,16 @@ function drawMatch() {
   ctx.closePath()
   ctx.fillStyle = '#ffd700'; ctx.fill()
 
-  // 瞄准线
-  if (touchDown&&ball.side==='my'&&ball.idx===ctrlIdx) {
-    var sdx=touchX-touchStartX,sdy=touchY-touchStartY,sD=Math.sqrt(sdx*sdx+sdy*sdy)
-    if (sD>10) {
-      var aL=Math.min(sD*1.2,PH*0.25)
-      var ax=cp.x+(sdx/sD)*aL*0.4,ay=cp.y+(sdy/sD)*aL
+  // 瞄准线（摇杆方向）
+  if (joystick.active&&ball.side==='my'&&ball.idx===ctrlIdx) {
+    var jD=Math.sqrt(joystick.dx*joystick.dx+joystick.dy*joystick.dy)
+    if (jD>5) {
+      var aL=PH*0.18
+      var ax=cp.x+(joystick.dx/jD)*aL*0.4,ay=cp.y+(joystick.dy/jD)*aL
       ctx.beginPath();ctx.moveTo(cp.x,cp.y-PLAYER_R);ctx.lineTo(ax,ay)
-      ctx.strokeStyle=sdy<-5?'rgba(255,215,0,0.5)':'rgba(100,255,100,0.4)';ctx.lineWidth=2.5;ctx.stroke()
-      ctx.beginPath();ctx.arc(ax,ay,4,0,Math.PI*2)
-      ctx.fillStyle=sdy<-5?'rgba(255,215,0,0.6)':'rgba(100,255,100,0.5)';ctx.fill()
-      if (sD>18&&sdy<-10) render.drawStrokeText(ctx,'松手射门!',cp.x,cp.y-PLAYER_R*4,'bold '+(W*0.03)+'px sans-serif','#ffd700','rgba(0,0,0,0.5)',2)
-      else if (sD>18) render.drawStrokeText(ctx,'松手传球',cp.x,cp.y-PLAYER_R*4,'bold '+(W*0.028)+'px sans-serif','#4CAF50','rgba(0,0,0,0.5)',2)
+      ctx.strokeStyle='rgba(255,215,0,0.4)';ctx.lineWidth=2;ctx.stroke()
+      ctx.beginPath();ctx.arc(ax,ay,3,0,Math.PI*2)
+      ctx.fillStyle='rgba(255,215,0,0.5)';ctx.fill()
     }
   }
   // 粒子
@@ -1866,6 +1889,64 @@ function drawMatch() {
     ctx.globalAlpha=1
   }
   drawMatchHUD()
+  // 虚拟摇杆
+  if (matchCountdown<=0) {
+    var jbx = W * 0.16, jby = py(0.82)
+    // 更新按钮位置
+    BTN_SHOOT.x = W * 0.84; BTN_SHOOT.y = py(0.75); BTN_SHOOT.r = 30
+    BTN_PASS.x = W * 0.68; BTN_PASS.y = py(0.85); BTN_PASS.r = 24
+    BTN_SWITCH.x = W * 0.84; BTN_SWITCH.y = py(0.88); BTN_SWITCH.r = 22
+    // 摇杆底座（激活时跟随触摸位置）
+    var jBaseDrawX = joystick.active ? joystick.baseX : jbx
+    var jBaseDrawY = joystick.active ? joystick.baseY : jby
+    ctx.beginPath(); ctx.arc(jBaseDrawX, jBaseDrawY, JOY_RADIUS, 0, Math.PI * 2)
+    ctx.fillStyle = 'rgba(255,255,255,0.08)'; ctx.fill()
+    ctx.strokeStyle = 'rgba(255,255,255,0.15)'; ctx.lineWidth = 2; ctx.stroke()
+    // 摇杆
+    var sjx = jBaseDrawX, sjy = jBaseDrawY
+    if (joystick.active) {
+      sjx = joystick.stickX; sjy = joystick.stickY
+    }
+    ctx.beginPath(); ctx.arc(sjx, sjy, JOY_STICK_R, 0, Math.PI * 2)
+    var jGrad2 = ctx.createRadialGradient(sjx-3, sjy-3, 0, sjx, sjy, JOY_STICK_R)
+    jGrad2.addColorStop(0, 'rgba(255,255,255,0.35)'); jGrad2.addColorStop(1, 'rgba(255,255,255,0.12)')
+    ctx.fillStyle = jGrad2; ctx.fill()
+    // 射门按钮
+    ctx.beginPath(); ctx.arc(BTN_SHOOT.x, BTN_SHOOT.y, BTN_SHOOT.r, 0, Math.PI * 2)
+    ctx.fillStyle = shootBtnPressed ? 'rgba(255,215,0,0.6)' : 'rgba(255,215,0,0.3)'
+    ctx.fill()
+    ctx.strokeStyle = 'rgba(255,215,0,0.7)'; ctx.lineWidth = 2.5; ctx.stroke()
+    // 蓄力进度环
+    if (shootBtnPressed && shootChargeStart > 0) {
+      var chgPct = Math.min((now - shootChargeStart) / CHARGE_MAX_MS, 1)
+      ctx.beginPath(); ctx.arc(BTN_SHOOT.x, BTN_SHOOT.y, BTN_SHOOT.r + 4, -Math.PI/2, -Math.PI/2 + chgPct * Math.PI * 2)
+      ctx.strokeStyle = chgPct > 0.8 ? '#ff4444' : '#ffd700'; ctx.lineWidth = 4; ctx.stroke()
+    }
+    ctx.fillStyle = '#fff'; ctx.font = 'bold ' + (W*0.035) + 'px sans-serif'
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
+    ctx.fillText('射门', BTN_SHOOT.x, BTN_SHOOT.y)
+    // 传球按钮
+    ctx.beginPath(); ctx.arc(BTN_PASS.x, BTN_PASS.y, BTN_PASS.r, 0, Math.PI * 2)
+    ctx.fillStyle = passBtnPressed ? 'rgba(100,255,100,0.6)' : 'rgba(100,255,100,0.25)'
+    ctx.fill()
+    ctx.strokeStyle = 'rgba(100,255,100,0.6)'; ctx.lineWidth = 2; ctx.stroke()
+    // 蓄力进度环
+    if (passBtnPressed && passChargeStart > 0) {
+      var chgPctP = Math.min((now - passChargeStart) / CHARGE_MAX_MS, 1)
+      ctx.beginPath(); ctx.arc(BTN_PASS.x, BTN_PASS.y, BTN_PASS.r + 3, -Math.PI/2, -Math.PI/2 + chgPctP * Math.PI * 2)
+      ctx.strokeStyle = '#4CAF50'; ctx.lineWidth = 3; ctx.stroke()
+    }
+    ctx.fillStyle = '#fff'; ctx.font = 'bold ' + (W*0.03) + 'px sans-serif'
+    ctx.fillText('传球', BTN_PASS.x, BTN_PASS.y)
+    // 切换按钮
+    ctx.beginPath(); ctx.arc(BTN_SWITCH.x, BTN_SWITCH.y, BTN_SWITCH.r, 0, Math.PI * 2)
+    ctx.fillStyle = switchBtnPressed ? 'rgba(30,144,255,0.6)' : 'rgba(30,144,255,0.25)'
+    ctx.fill()
+    ctx.strokeStyle = 'rgba(30,144,255,0.5)'; ctx.lineWidth = 2; ctx.stroke()
+    ctx.fillStyle = '#fff'; ctx.font = 'bold ' + (W*0.026) + 'px sans-serif'
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
+    ctx.fillText('切换', BTN_SWITCH.x, BTN_SWITCH.y)
+  }
   // 倒计时
   if (matchCountdown>0) {
     ctx.fillStyle='rgba(0,0,0,0.5)';ctx.fillRect(0,PT,W,PH)
@@ -1882,14 +1963,12 @@ function drawMatch() {
       ctx.fillStyle='rgba(0,0,0,'+gA*0.6+')';ctx.fillRect(0,py(0.35),W,PH*0.65)
       render.drawStrokeText(ctx,'📱 操控说明',W/2,py(0.42),'bold '+(W*0.06)+'px sans-serif','#fff','rgba(0,0,0,0.7)',4)
       var gTips = [
-        { text:'👆 拖动球员移动', color:'#4CAF50' },
-        { text:'⬆️ 上滑射门 · 斜滑弧线球', color:'#ffd700' },
-        { text:'↔️ 横滑传球 · 靠近抢断', color:'#1E90FF' },
-        { text:'── 控制权 ──', color:'rgba(255,255,255,0.4)' },
-        { text:'👆 点击队友手动切换', color:'#4CAF50' },
-        { text:'📨 你传球后自动切接球人', color:'#ffd700' },
-        { text:'🛡️ 你抢断时自动切', color:'#FF9800' },
-        { text:'🤖 AI拿球不打断你操控', color:'#1E90FF' }
+        { text:'🕹️ 左侧摇杆 · 控制移动和方向', color:'#4CAF50' },
+        { text:'⚽ 按住射门键蓄力 · 松开射门', color:'#ffd700' },
+        { text:'📨 按住传球键蓄力 · 松开传球', color:'#1E90FF' },
+        { text:'🔄 切换键 · 切到离球最近的队友', color:'#1E90FF' },
+        { text:'靠近对手自动抢断', color:'#FF9800' },
+        { text:'蓄力越久力量越大！', color:'rgba(255,255,255,0.6)' }
       ]
       for (var gi=0;gi<gTips.length;gi++) {
         render.drawText(ctx,gTips[gi].text,W/2,py(0.50)+gi*30,'bold '+(W*0.028)+'px sans-serif',gTips[gi].color)
@@ -1898,9 +1977,9 @@ function drawMatch() {
     } else if (guideStep===2) {
       ctx.fillStyle='rgba(0,0,0,'+gA*0.6+')';ctx.fillRect(0,PT,W,PH*0.45)
       render.drawStrokeText(ctx,'⚽ 准备开始！',W/2,py(0.1),'bold '+(W*0.06)+'px sans-serif','#ffd700','rgba(0,0,0,0.7)',4)
-      render.drawText(ctx,'队友自动跑位和传球',W/2,py(0.18),'bold '+(W*0.03)+'px sans-serif','rgba(255,255,255,0.9)')
-      render.drawText(ctx,'你只控制一个球员，点击切换',W/2,py(0.24),'bold '+(W*0.03)+'px sans-serif','rgba(255,255,255,0.9)')
-      render.drawText(ctx,'斜向滑动踢出弧线球！',W/2,py(0.30),'bold '+(W*0.03)+'px sans-serif','#ffd700')
+      render.drawText(ctx,'左侧摇杆移动，右侧射门/传球/切换',W/2,py(0.18),'bold '+(W*0.03)+'px sans-serif','rgba(255,255,255,0.9)')
+      render.drawText(ctx,'按住射门/传球键蓄力，松开释放',W/2,py(0.24),'bold '+(W*0.03)+'px sans-serif','rgba(255,255,255,0.9)')
+      render.drawText(ctx,'蓄力越久力量越大！',W/2,py(0.30),'bold '+(W*0.03)+'px sans-serif','#ffd700')
       render.drawStrokeText(ctx,'👆 点击开始比赛',W/2,py(0.9),'bold '+(W*0.03)+'px sans-serif','#fff','rgba(0,0,0,0.5)',2)
     }
   }
@@ -1933,45 +2012,78 @@ function getGKColor(teamColor) {
 }
 
 // 穿球衣的小人
-function drawMiniPlayer(ctx, x, y, r, color, num, highlighted, hasBall, isGK) {
+function drawMiniPlayer(ctx, x, y, r, color, num, highlighted, hasBall, isGK, vx, vy, role) {
   var s = r
-  // GK球衣：11v11用对比色，5v5用同队色变体（看起来是一个队）
+  vx = vx || 0; vy = vy || 0
+  var speed = Math.sqrt(vx*vx + vy*vy)
+  var isMoving = speed > 0.3
+  var now = Date.now()
+
+  // 朝向角度（基于移动方向）
+  var faceAngle = 0 // 0=正面
+  if (isMoving) { faceAngle = Math.atan2(vx, -vy) } // 面朝移动方向
+
+  // 朝向偏移（左右偏移头部和五官）
+  var faceX = Math.sin(faceAngle) * s * 0.15  // 头部左右偏移
+  var faceSide = faceAngle > 0.3 ? 1 : faceAngle < -0.3 ? -1 : 0 // 1=右, -1=左, 0=正面
+
+  // 跑动动画（腿部摆动）
+  var legSwing = 0, armSwing = 0
+  if (isMoving) {
+    var runCycle = (now * 0.012 + x * 0.1) % (Math.PI * 2) // 每个球员相位不同
+    legSwing = Math.sin(runCycle) * s * 0.25
+    armSwing = Math.sin(runCycle + Math.PI) * s * 0.12
+  }
+
+  // GK球衣颜色
   var jc
   if (!isGK) { jc = safeColor(color) }
-  else if (matchTeamSize <= 5) { jc = safeLighten(safeColor(color), 50) } // 同色浅色版
+  else if (matchTeamSize <= 5) { jc = safeLighten(safeColor(color), 50) }
   else { jc = safeColor(getGKColor(color)) }
 
-  // 阴影
-  ctx.beginPath(); ctx.arc(x, y+s, s*0.4, 0, Math.PI*2)
+  // GK体型更壮
+  var bodyScale = isGK ? 1.15 : 1.0
+
+  // 阴影（移动时拉长）
+  ctx.beginPath()
+  ctx.ellipse ? ctx.ellipse(x, y+s*1.0, s*(0.4+speed*0.02), s*0.2, 0, 0, Math.PI*2) : ctx.arc(x, y+s*1.0, s*0.35, 0, Math.PI*2)
   ctx.fillStyle = 'rgba(0,0,0,0.2)'; ctx.fill()
 
-  // 腿+鞋
+  // === 腿（跑动摆动）===
   ctx.strokeStyle = '#dbb896'; ctx.lineWidth = s*0.16; ctx.lineCap = 'round'
-  ctx.beginPath(); ctx.moveTo(x-s*0.2, y+s*0.4); ctx.lineTo(x-s*0.18, y+s*0.85); ctx.stroke()
-  ctx.beginPath(); ctx.moveTo(x+s*0.2, y+s*0.4); ctx.lineTo(x+s*0.18, y+s*0.85); ctx.stroke()
+  // 左腿
+  var lLegEndX = x - s*0.18 + (isMoving ? legSwing * 0.3 : 0)
+  var lLegEndY = y + s*0.85 + (isMoving ? Math.abs(legSwing)*0.15 - s*0.08 : 0)
+  ctx.beginPath(); ctx.moveTo(x-s*0.2, y+s*0.4); ctx.lineTo(lLegEndX, lLegEndY); ctx.stroke()
+  // 右腿（反相）
+  var rLegEndX = x + s*0.18 + (isMoving ? -legSwing * 0.3 : 0)
+  var rLegEndY = y + s*0.85 + (isMoving ? Math.abs(-legSwing)*0.15 - s*0.08 : 0)
+  ctx.beginPath(); ctx.moveTo(x+s*0.2, y+s*0.4); ctx.lineTo(rLegEndX, rLegEndY); ctx.stroke()
+  // 球鞋
   ctx.fillStyle = '#222'
-  ctx.beginPath(); ctx.arc(x-s*0.18, y+s*0.9, s*0.1, 0, Math.PI*2); ctx.fill()
-  ctx.beginPath(); ctx.arc(x+s*0.18, y+s*0.9, s*0.1, 0, Math.PI*2); ctx.fill()
+  ctx.beginPath(); ctx.arc(lLegEndX, lLegEndY+s*0.05, s*0.1, 0, Math.PI*2); ctx.fill()
+  ctx.beginPath(); ctx.arc(rLegEndX, rLegEndY+s*0.05, s*0.1, 0, Math.PI*2); ctx.fill()
 
   // 短裤
   ctx.fillStyle = isGK ? safeLighten(jc, -40) : '#222'
   ctx.beginPath()
-  ctx.moveTo(x-s*0.35, y+s*0.25); ctx.lineTo(x-s*0.25, y+s*0.5)
-  ctx.lineTo(x+s*0.25, y+s*0.5); ctx.lineTo(x+s*0.35, y+s*0.25)
+  ctx.moveTo(x-s*0.35*bodyScale, y+s*0.25); ctx.lineTo(x-s*0.25, y+s*0.5)
+  ctx.lineTo(x+s*0.25, y+s*0.5); ctx.lineTo(x+s*0.35*bodyScale, y+s*0.25)
   ctx.closePath(); ctx.fill()
 
-  // 球衣（纯色填充，避免渐变兼容性问题）
+  // 球衣
+  var bw = 0.45 * bodyScale // 球衣宽度系数
   ctx.beginPath()
-  ctx.moveTo(x-s*0.45, y-s*0.15)
-  ctx.quadraticCurveTo(x-s*0.5, y+s*0.3, x-s*0.3, y+s*0.35)
+  ctx.moveTo(x-s*bw, y-s*0.15)
+  ctx.quadraticCurveTo(x-s*(bw+0.05), y+s*0.3, x-s*0.3, y+s*0.35)
   ctx.lineTo(x+s*0.3, y+s*0.35)
-  ctx.quadraticCurveTo(x+s*0.5, y+s*0.3, x+s*0.45, y-s*0.15)
+  ctx.quadraticCurveTo(x+s*(bw+0.05), y+s*0.3, x+s*bw, y-s*0.15)
   ctx.closePath()
   ctx.fillStyle = jc; ctx.fill()
-  // 球衣高光（左上角亮）
+  // 球衣高光
   ctx.fillStyle = 'rgba(255,255,255,0.15)'
   ctx.beginPath()
-  ctx.moveTo(x-s*0.4, y-s*0.1)
+  ctx.moveTo(x-s*(bw-0.05), y-s*0.1)
   ctx.quadraticCurveTo(x-s*0.3, y+s*0.1, x, y+s*0.15)
   ctx.lineTo(x, y-s*0.1); ctx.closePath(); ctx.fill()
   ctx.strokeStyle = 'rgba(0,0,0,0.12)'; ctx.lineWidth = 0.5; ctx.stroke()
@@ -1982,35 +2094,79 @@ function drawMiniPlayer(ctx, x, y, r, color, num, highlighted, hasBall, isGK) {
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
   ctx.fillText(''+num, x, y+s*0.12)
 
-  // 袖子+手
+  // 袖子+手（跑动摆动）
+  var armL = isGK ? s*0.18 : s*0.12
   ctx.strokeStyle = jc; ctx.lineWidth = s*0.14; ctx.lineCap = 'round'
-  ctx.beginPath(); ctx.moveTo(x-s*0.42,y-s*0.05); ctx.lineTo(x-s*0.55,y+s*0.15); ctx.stroke()
-  ctx.beginPath(); ctx.moveTo(x+s*0.42,y-s*0.05); ctx.lineTo(x+s*0.55,y+s*0.15); ctx.stroke()
+  ctx.beginPath(); ctx.moveTo(x-s*bw+s*0.03,y-s*0.05); ctx.lineTo(x-s*(bw+0.1),y+s*0.15+armSwing); ctx.stroke()
+  ctx.beginPath(); ctx.moveTo(x+s*bw-s*0.03,y-s*0.05); ctx.lineTo(x+s*(bw+0.1),y+s*0.15-armSwing); ctx.stroke()
   ctx.strokeStyle = '#dbb896'; ctx.lineWidth = s*0.1
-  ctx.beginPath(); ctx.moveTo(x-s*0.55,y+s*0.15); ctx.lineTo(x-s*0.6,y+s*0.25); ctx.stroke()
-  ctx.beginPath(); ctx.moveTo(x+s*0.55,y+s*0.15); ctx.lineTo(x+s*0.6,y+s*0.25); ctx.stroke()
+  ctx.beginPath(); ctx.moveTo(x-s*(bw+0.1),y+s*0.15+armSwing); ctx.lineTo(x-s*(bw+0.15),y+s*0.25+armSwing); ctx.stroke()
+  ctx.beginPath(); ctx.moveTo(x+s*(bw+0.1),y+s*0.15-armSwing); ctx.lineTo(x+s*(bw+0.15),y+s*0.25-armSwing); ctx.stroke()
 
-  // GK手套
+  // GK手套（更大）
   if (isGK) {
     ctx.fillStyle = '#FF851B'
-    ctx.beginPath(); ctx.arc(x-s*0.62,y+s*0.27,s*0.11,0,Math.PI*2); ctx.fill()
-    ctx.beginPath(); ctx.arc(x+s*0.62,y+s*0.27,s*0.11,0,Math.PI*2); ctx.fill()
+    ctx.beginPath(); ctx.arc(x-s*(bw+0.17),y+s*0.27+armSwing,s*0.13,0,Math.PI*2); ctx.fill()
+    ctx.beginPath(); ctx.arc(x+s*(bw+0.17),y+s*0.27-armSwing,s*0.13,0,Math.PI*2); ctx.fill()
   }
 
-  // 头
-  ctx.beginPath(); ctx.arc(x, y-s*0.32, s*0.28, 0, Math.PI*2)
-  ctx.fillStyle = '#f0d0a0'; ctx.fill()
-  // 头发
-  ctx.beginPath(); ctx.arc(x, y-s*0.32, s*0.28, Math.PI*1.1, Math.PI*1.9)
-  ctx.strokeStyle = '#3a2518'; ctx.lineWidth = s*0.12; ctx.stroke()
+  // === 头部（朝向偏移）===
+  var headX = x + faceX * 0.5
+  var headY = y - s * 0.32
+  var headR = s * (isGK ? 0.30 : 0.28)
+  ctx.beginPath(); ctx.arc(headX, headY, headR, 0, Math.PI*2)
+  // 肤色渐变
+  var hGrad2 = ctx.createRadialGradient(headX-headR*0.3, headY-headR*0.3, 0, headX, headY, headR)
+  hGrad2.addColorStop(0, '#ffe0c0'); hGrad2.addColorStop(1, '#e0b080')
+  ctx.fillStyle = hGrad2; ctx.fill()
+
+  // 头发（根据朝向调整弧度）
+  var hairStart = faceSide === 1 ? 1.0 : 1.15
+  var hairEnd = faceSide === -1 ? 2.0 : 1.85
+  ctx.beginPath(); ctx.arc(headX, headY, headR, Math.PI*hairStart, Math.PI*hairEnd)
+  ctx.strokeStyle = isGK ? '#2a1a08' : '#3a2518'; ctx.lineWidth = s*0.13; ctx.stroke()
+
+  // === 五官（根据朝向偏移）===
+  var eyeOffX = faceX * 0.6 // 眼睛跟随朝向
+  if (faceSide === 0) {
+    // 正面：两只眼睛
+    ctx.fillStyle = '#fff'
+    ctx.beginPath(); ctx.arc(headX-headR*0.3+eyeOffX, headY-headR*0.1, headR*0.17, 0, Math.PI*2); ctx.fill()
+    ctx.beginPath(); ctx.arc(headX+headR*0.3+eyeOffX, headY-headR*0.1, headR*0.17, 0, Math.PI*2); ctx.fill()
+    ctx.fillStyle = '#222'
+    ctx.beginPath(); ctx.arc(headX-headR*0.28+eyeOffX, headY-headR*0.08, headR*0.09, 0, Math.PI*2); ctx.fill()
+    ctx.beginPath(); ctx.arc(headX+headR*0.32+eyeOffX, headY-headR*0.08, headR*0.09, 0, Math.PI*2); ctx.fill()
+    // 眼睛高光
+    ctx.fillStyle = '#fff'
+    ctx.beginPath(); ctx.arc(headX-headR*0.26+eyeOffX, headY-headR*0.12, headR*0.04, 0, Math.PI*2); ctx.fill()
+    ctx.beginPath(); ctx.arc(headX+headR*0.34+eyeOffX, headY-headR*0.12, headR*0.04, 0, Math.PI*2); ctx.fill()
+    // 微笑
+    ctx.beginPath()
+    ctx.arc(headX+eyeOffX, headY+headR*0.15, headR*0.2, 0.1*Math.PI, 0.9*Math.PI)
+    ctx.strokeStyle = '#a0522d'; ctx.lineWidth = s*0.05; ctx.lineCap = 'round'; ctx.stroke()
+  } else {
+    // 侧面：一只眼睛+半边嘴
+    var side = faceSide
+    ctx.fillStyle = '#fff'
+    ctx.beginPath(); ctx.arc(headX+side*headR*0.15+eyeOffX, headY-headR*0.1, headR*0.18, 0, Math.PI*2); ctx.fill()
+    ctx.fillStyle = '#222'
+    ctx.beginPath(); ctx.arc(headX+side*headR*0.18+eyeOffX, headY-headR*0.08, headR*0.1, 0, Math.PI*2); ctx.fill()
+    ctx.fillStyle = '#fff'
+    ctx.beginPath(); ctx.arc(headX+side*headR*0.2+eyeOffX, headY-headR*0.12, headR*0.04, 0, Math.PI*2); ctx.fill()
+    // 鼻子小点
+    ctx.fillStyle = '#d4a07a'
+    ctx.beginPath(); ctx.arc(headX+side*headR*0.4+eyeOffX, headY+headR*0.05, headR*0.06, 0, Math.PI*2); ctx.fill()
+    // 嘴
+    ctx.beginPath()
+    ctx.arc(headX+side*headR*0.2+eyeOffX, headY+headR*0.2, headR*0.12, 0.1*Math.PI, 0.9*Math.PI)
+    ctx.strokeStyle = '#a0522d'; ctx.lineWidth = s*0.05; ctx.lineCap = 'round'; ctx.stroke()
+  }
 
   // 选中高亮
   if (highlighted) {
     ctx.beginPath(); ctx.arc(x, y+s*0.1, s*1.15, 0, Math.PI*2)
     ctx.strokeStyle = '#ffd700'; ctx.lineWidth = 2; ctx.stroke()
   }
-
-  // 持球标记已移除（球独立渲染在脚下，不需要额外标记）
 }
 
 function drawMatchHUD() {
@@ -2027,13 +2183,13 @@ function drawMatchHUD() {
   ctx.fillStyle='rgba(0,0,0,0.3)'
   render.roundRect(ctx, W*0.1, tipY-12, W*0.8, 24, 12); ctx.fill()
   if (ball.side==='my'&&ball.idx===ctrlIdx) {
-    render.drawText(ctx,'↑ 上滑射门  ← → 横滑传球',W/2,tipY,(W*0.026)+'px sans-serif','#ffd700')
+    render.drawText(ctx,'持球中 · 长按蓄力射门/传球',W/2,tipY,(W*0.026)+'px sans-serif','#ffd700')
   } else if (ball.side==='op') {
-    render.drawText(ctx,'靠近对手 → 自动抢断',W/2,tipY,(W*0.026)+'px sans-serif','#ff6b6b')
+    render.drawText(ctx,'靠近抢断 · 切换键换人',W/2,tipY,(W*0.026)+'px sans-serif','#ff6b6b')
   } else if (ball.side==='my') {
-    render.drawText(ctx,'点击队友切换控制',W/2,tipY,(W*0.026)+'px sans-serif','#8BC34A')
+    render.drawText(ctx,'队友持球 · 切换键接管',W/2,tipY,(W*0.026)+'px sans-serif','#8BC34A')
   } else {
-    render.drawText(ctx,'靠近足球 → 自动拿球',W/2,tipY,(W*0.026)+'px sans-serif','rgba(255,255,255,0.7)')
+    render.drawText(ctx,'靠近足球拿球 · 切换键换人',W/2,tipY,(W*0.026)+'px sans-serif','rgba(255,255,255,0.7)')
   }
   if (secs<=10&&secs>0&&Math.sin(now/200)>0) render.drawText(ctx,'⏱'+secs+'秒！',W/2,py(0.5),'bold '+(W*0.04)+'px sans-serif','#ff6b6b')
 }
@@ -2203,15 +2359,15 @@ function updateChlAttack(dt) {
   }
 }
 
-function chlShoot(svx, svy) {
+function chlShoot(svx, svy, power) {
   if (chlPhase !== 'aim') return
-  var power = Math.min(Math.sqrt(svx*svx+svy*svy) / 60, 1.5)
-  var shootSpeed = (6.5 + getStatValue('atk') * 0.6) * Math.max(power, 0.5)
+  var pw = power || 1.0
+  var shootSpeed = (6.5 + getStatValue('atk') * 0.6) * pw
   var dist = Math.sqrt(svx * svx + svy * svy)
   if (dist < 0.1) return
   chlBall.vx = (svx / dist) * shootSpeed
   chlBall.vy = (svy / dist) * shootSpeed
-  chlBall.spin = (svx / dist) * 0.12 * power // 弧线球
+  chlBall.spin = (svx / dist) * 0.12 * pw // 弧线球
   chlShots.push({ sx:chlBall.x, sy:chlBall.y, vx:chlBall.vx, vy:chlBall.vy, spin:chlBall.spin })
   chlPhase = 'flying'
   audio.playKick(4)
@@ -2309,41 +2465,54 @@ function drawChlAttack() {
   // 射手（站在球后面）
   if (chlPhase === 'aim') {
     drawMiniPlayer(ctx, cx, penaltySpotY + PLAYER_R * 3, PLAYER_R * 1.2, safeColor(myT.color), 9, true, false, false)
-    // 瞄准线 + 力量条
-    if (touchDown) {
-      var sdx = touchX - touchStartX, sdy = touchY - touchStartY
-      var sDist = Math.sqrt(sdx*sdx + sdy*sdy)
-      if (sDist > 8 && sdy < 0) {
-        var aLen = Math.min(sDist * 1.5, penaltySpotY - goalLineY)
-        var ax = cx + (sdx / sDist) * aLen * 0.4
-        var ay = penaltySpotY + (sdy / sDist) * aLen
-        // 瞄准线
-        ctx.beginPath(); ctx.moveTo(cx, penaltySpotY); ctx.lineTo(ax, ay)
-        ctx.strokeStyle = 'rgba(255,215,0,0.5)'; ctx.lineWidth = 2; ctx.stroke()
-        ctx.beginPath(); ctx.arc(ax, ay, 5, 0, Math.PI*2)
-        ctx.fillStyle = 'rgba(255,215,0,0.6)'; ctx.fill()
 
-        // 力量条（右侧）
-        var power = Math.min(sDist / 80, 1.5)
-        var powerPct = power / 1.5
-        var barX2 = W * 0.88, barY2 = penaltySpotY - 60, barH2 = 100, barW2 = 10
-        // 背景
-        ctx.fillStyle = 'rgba(255,255,255,0.08)'
-        render.roundRect(ctx, barX2, barY2, barW2, barH2, 4); ctx.fill()
-        // 填充（绿→黄→红）
-        var fillH = barH2 * powerPct
-        var powerColor = powerPct < 0.5 ? '#4CAF50' : powerPct < 0.8 ? '#FFD700' : '#FF5722'
-        ctx.fillStyle = powerColor
-        render.roundRect(ctx, barX2, barY2 + barH2 - fillH, barW2, fillH, 4); ctx.fill()
-        // 标签
-        var powerLabel = powerPct < 0.3 ? '轻' : powerPct < 0.7 ? '中' : '大力'
-        render.drawText(ctx, powerLabel, barX2 + barW2/2, barY2 - 10, (W*0.022)+'px sans-serif', powerColor, 'center')
+    // 摇杆瞄准线
+    var jD4 = Math.sqrt(joystick.dx*joystick.dx + joystick.dy*joystick.dy)
+    if (joystick.active && jD4 > 3) {
+      var aLen = penaltySpotY - goalLineY
+      var ax = cx + (joystick.dx / jD4) * aLen * 0.4
+      var ay = penaltySpotY + (joystick.dy / jD4) * aLen
+      ctx.beginPath(); ctx.moveTo(cx, penaltySpotY); ctx.lineTo(ax, ay)
+      ctx.strokeStyle = 'rgba(255,215,0,0.5)'; ctx.lineWidth = 2; ctx.stroke()
+      ctx.beginPath(); ctx.arc(ax, ay, 5, 0, Math.PI*2)
+      ctx.fillStyle = 'rgba(255,215,0,0.6)'; ctx.fill()
+    }
 
-        render.drawText(ctx, '松手射门!', cx, penaltySpotY + PLAYER_R * 6, (W*0.03)+'px sans-serif', '#ffd700')
-      }
-    } else {
-      render.drawText(ctx, '↑ 向上滑动射门', cx, H * 0.78, (W*0.032)+'px sans-serif', 'rgba(255,255,255,0.7)')
-      render.drawText(ctx, '滑动越长力量越大·斜滑=弧线球', cx, H * 0.82, (W*0.024)+'px sans-serif', 'rgba(255,255,255,0.5)')
+    // 射门按钮 + 蓄力
+    var chlBtnX = W * 0.82, chlBtnY = penaltySpotY + PLAYER_R * 5, chlBtnR = 32
+    ctx.beginPath(); ctx.arc(chlBtnX, chlBtnY, chlBtnR, 0, Math.PI * 2)
+    ctx.fillStyle = shootBtnPressed ? 'rgba(255,215,0,0.6)' : 'rgba(255,215,0,0.3)'
+    ctx.fill()
+    ctx.strokeStyle = 'rgba(255,215,0,0.7)'; ctx.lineWidth = 2.5; ctx.stroke()
+    // 蓄力环
+    if (shootBtnPressed && shootChargeStart > 0) {
+      var chgPct2 = Math.min((now - shootChargeStart) / CHARGE_MAX_MS, 1)
+      ctx.beginPath(); ctx.arc(chlBtnX, chlBtnY, chlBtnR + 4, -Math.PI/2, -Math.PI/2 + chgPct2 * Math.PI * 2)
+      ctx.strokeStyle = chgPct2 > 0.8 ? '#ff4444' : '#ffd700'; ctx.lineWidth = 4; ctx.stroke()
+      // 力量标签
+      var pLabel = chgPct2 < 0.3 ? '轻' : chgPct2 < 0.7 ? '中' : '大力'
+      var pColor = chgPct2 < 0.5 ? '#4CAF50' : chgPct2 < 0.8 ? '#FFD700' : '#FF5722'
+      render.drawText(ctx, pLabel, chlBtnX, chlBtnY - chlBtnR - 12, (W*0.025)+'px sans-serif', pColor)
+    }
+    ctx.fillStyle = '#fff'; ctx.font = 'bold ' + (W*0.035) + 'px sans-serif'
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
+    ctx.fillText('射门', chlBtnX, chlBtnY)
+
+    // 摇杆（左下角）
+    var chlJoyX = W * 0.18, chlJoyY = penaltySpotY + PLAYER_R * 5
+    var jBaseX2 = joystick.active ? joystick.baseX : chlJoyX
+    var jBaseY2 = joystick.active ? joystick.baseY : chlJoyY
+    ctx.beginPath(); ctx.arc(jBaseX2, jBaseY2, JOY_RADIUS, 0, Math.PI * 2)
+    ctx.fillStyle = 'rgba(255,255,255,0.08)'; ctx.fill()
+    ctx.strokeStyle = 'rgba(255,255,255,0.15)'; ctx.lineWidth = 2; ctx.stroke()
+    var cjx = jBaseX2, cjy = jBaseY2
+    if (joystick.active) { cjx = joystick.stickX; cjy = joystick.stickY }
+    ctx.beginPath(); ctx.arc(cjx, cjy, JOY_STICK_R, 0, Math.PI * 2)
+    ctx.fillStyle = 'rgba(255,255,255,0.25)'; ctx.fill()
+
+    // 提示文字
+    if (!joystick.active && !shootBtnPressed) {
+      render.drawText(ctx, '摇杆瞄准 · 按住射门蓄力', cx, H * 0.9, (W*0.028)+'px sans-serif', 'rgba(255,255,255,0.6)')
     }
   }
 
@@ -2450,11 +2619,12 @@ function updateChlDefend(dt) {
     chlBall.x += chlBall.vx * dtF
     chlBall.y += chlBall.vy * dtF
 
-    // 守门员跟手
-    if (touchDown) {
+    // 守门员摇杆控制
+    if (joystick.active) {
       var gkSpeed = (2.8 + getStatValue('def') * 0.3) * dtF
-      var gkDx = touchX - chlGKX
-      if (Math.abs(gkDx) > 2) chlGKX += (gkDx > 0 ? 1 : -1) * Math.min(gkSpeed, Math.abs(gkDx))
+      var gkPct = Math.min(Math.abs(joystick.dx) / JOY_RADIUS, 1.0)
+      var gkMv = (joystick.dx > 0 ? 1 : -1) * gkSpeed * gkPct
+      if (Math.abs(joystick.dx) > 3) chlGKX += gkMv
       chlGKX = clamp(chlGKX, goalL + 10, goalR - 10)
     }
 
@@ -2569,8 +2739,18 @@ function drawChlDefend() {
   // 守门员（你控制）
   drawMiniPlayer(ctx, chlGKX, goalLineY - 5, PLAYER_R * 1.3, safeColor(myT.color), 1, true, false, true)
 
-  // 滑动提示
-  render.drawText(ctx, '← 滑动控制守门员 →', cx, goalLineY + 50, (W*0.03)+'px sans-serif', 'rgba(255,255,255,0.7)')
+  // 摇杆控制守门员
+  var defJoyX = W * 0.18, defJoyY = goalLineY + 60
+  var djbx = joystick.active ? joystick.baseX : defJoyX
+  var djby = joystick.active ? joystick.baseY : defJoyY
+  ctx.beginPath(); ctx.arc(djbx, djby, JOY_RADIUS, 0, Math.PI * 2)
+  ctx.fillStyle = 'rgba(255,255,255,0.08)'; ctx.fill()
+  ctx.strokeStyle = 'rgba(255,255,255,0.15)'; ctx.lineWidth = 2; ctx.stroke()
+  var dsjx = djbx, dsjy = djby
+  if (joystick.active) { dsjx = joystick.stickX; dsjy = joystick.stickY }
+  ctx.beginPath(); ctx.arc(dsjx, dsjy, JOY_STICK_R, 0, Math.PI * 2)
+  ctx.fillStyle = 'rgba(255,255,255,0.25)'; ctx.fill()
+  render.drawText(ctx, '← 摇杆控制守门员 →', cx, goalLineY + 50, (W*0.03)+'px sans-serif', 'rgba(255,255,255,0.6)')
 
   // 飘字
   for (var fi = floats.length-1; fi >= 0; fi--) {
@@ -2834,26 +3014,48 @@ wx.onTouchStart(function(e) {
       }
     }
   } else if (scene === 'match') {
-    // 点击我方球员切换控制权（不含GK）
     if (matchCountdown <= 0 && guideStep <= 0) {
-      for (var pi = 0; pi < gkIdx(); pi++) {
-        if (pi === ctrlIdx) continue
-        if (dist2({x:tx, y:ty}, myTeam[pi]) < PLAYER_R * 3) {
-          setCtrl(pi)
-          playerGrabbed = true // 切换后直接抓住
-          floats.push({ x: myTeam[pi].x, y: myTeam[pi].y - 20, text: '切换#' + myTeam[pi].num, color: '#ffd700', born: Date.now() })
-          return
+      // 多点触控：遍历所有新触点
+      for (var ti = 0; ti < e.changedTouches.length; ti++) {
+        var ct = e.changedTouches[ti]
+        var ttx = ct.clientX, tty = ct.clientY, tid = ct.identifier
+        // 射门按钮（按下开始蓄力）
+        if (Math.sqrt(Math.pow(ttx-BTN_SHOOT.x,2)+Math.pow(tty-BTN_SHOOT.y,2)) < BTN_SHOOT.r + 10) {
+          shootBtnPressed = true; shootBtnTouchId = tid
+          shootChargeStart = Date.now()
+          continue
+        }
+        // 传球按钮（按下开始蓄力）
+        if (Math.sqrt(Math.pow(ttx-BTN_PASS.x,2)+Math.pow(tty-BTN_PASS.y,2)) < BTN_PASS.r + 10) {
+          passBtnPressed = true; passBtnTouchId = tid
+          passChargeStart = Date.now()
+          continue
+        }
+        // 切换按钮
+        if (Math.sqrt(Math.pow(ttx-BTN_SWITCH.x,2)+Math.pow(tty-BTN_SWITCH.y,2)) < BTN_SWITCH.r + 10) {
+          switchBtnPressed = true; switchBtnTouchId = tid
+          switchToNearest()
+          continue
+        }
+        // 左半屏：摇杆
+        if (ttx < W * 0.5 && !joystick.active) {
+          joystick.active = true; joystick.touchId = tid
+          joystick.baseX = ttx; joystick.baseY = tty
+          joystick.stickX = ttx; joystick.stickY = tty
+          joystick.dx = 0; joystick.dy = 0
+          continue
+        }
+        // 点击球场上的我方球员切换控制权
+        for (var pi = 0; pi < gkIdx(); pi++) {
+          if (pi === ctrlIdx) continue
+          if (dist2({x:ttx, y:tty}, myTeam[pi]) < PLAYER_R * 3) {
+            setCtrl(pi)
+            floats.push({ x: myTeam[pi].x, y: myTeam[pi].y - 20, text: '切换#' + myTeam[pi].num, color: '#ffd700', born: Date.now() })
+            break
+          }
         }
       }
-      // 5v5模式：必须触摸到当前控制球员附近才能移动
-      if (matchTeamSize === 5) {
-        if (dist2({x:tx, y:ty}, myTeam[ctrlIdx]) < PLAYER_R * 5) {
-          playerGrabbed = true
-        }
-        // 否则 playerGrabbed 保持 false，不会移动
-      } else {
-        playerGrabbed = true // 11v11保持原有行为
-      }
+      return
     }
     // 新手引导
     if (guideStep > 0) {
@@ -2865,14 +3067,6 @@ wx.onTouchStart(function(e) {
       }
     }
   } else if (scene === 'prematch') {
-    // 模式选择
-    var modeBtnW = W * 0.38, modeBtnH = W * 0.1, modeY = H * 0.66
-    if (render.hitTest(tx, ty, cx - modeBtnW - 6, modeY, modeBtnW, modeBtnH)) {
-      matchTeamSize = 5; return
-    }
-    if (render.hitTest(tx, ty, cx + 6, modeY, modeBtnW, modeBtnH)) {
-      matchTeamSize = 11; return
-    }
     // 开球
     if (render.hitTest(tx, ty, cx - W * 0.25, H * 0.76, W * 0.5, W * 0.1)) {
       scene = 'match'; initMatch(); return
@@ -2944,6 +3138,27 @@ wx.onTouchStart(function(e) {
     if (render.hitTest(tx, ty, cx - bw2 / 2, H * 0.82, bw2, bh2)) { shareGame(); return }
     // 返回
     if (ty > H * 0.90) { ad.hideBanner(); scene = 'home'; return }
+  } else if (scene === 'chlAttack' && chlPhase === 'aim') {
+    // 点球：摇杆 + 射门按钮
+    for (var cti = 0; cti < e.changedTouches.length; cti++) {
+      var cct = e.changedTouches[cti]
+      var cttx = cct.clientX, ctty = cct.clientY, ctid = cct.identifier
+      // 射门按钮（蓄力开始）
+      var chlBtnX2 = W * 0.82, chlBtnY2 = penaltySpotY + PLAYER_R * 5
+      if (Math.sqrt(Math.pow(cttx-chlBtnX2,2)+Math.pow(ctty-chlBtnY2,2)) < 42) {
+        shootBtnPressed = true; shootBtnTouchId = ctid; shootChargeStart = Date.now()
+        continue
+      }
+      // 摇杆
+      if (cttx < W * 0.5 && !joystick.active) {
+        joystick.active = true; joystick.touchId = ctid
+        joystick.baseX = cttx; joystick.baseY = ctty
+        joystick.stickX = cttx; joystick.stickY = ctty
+        joystick.dx = 0; joystick.dy = 0
+        continue
+      }
+    }
+    return
   } else if (scene === 'chlAttack' && chlPhase === 'done') {
     // 分享按钮（大号）
     if (render.hitTest(tx, ty, cx - W*0.3, H*0.65-W*0.06, W*0.6, W*0.12)) {
@@ -2951,6 +3166,19 @@ wx.onTouchStart(function(e) {
     }
     // 返回首页
     if (ty > H * 0.79) { scene = 'home'; return }
+  } else if (scene === 'chlDefend' && (chlPhase === 'ready' || chlPhase === 'incoming')) {
+    // 扑救：摇杆控制守门员
+    for (var dti = 0; dti < e.changedTouches.length; dti++) {
+      var dct = e.changedTouches[dti]
+      if (!joystick.active) {
+        joystick.active = true; joystick.touchId = dct.identifier
+        joystick.baseX = dct.clientX; joystick.baseY = dct.clientY
+        joystick.stickX = dct.clientX; joystick.stickY = dct.clientY
+        joystick.dx = 0; joystick.dy = 0
+        break
+      }
+    }
+    return
   } else if (scene === 'chlDefend' && chlPhase === 'done') {
     if (render.hitTest(tx, ty, cx - W*0.25, H*0.55, W*0.5, W*0.11)) {
       scene = 'chlResult'; return
@@ -2980,35 +3208,80 @@ wx.onTouchMove(function(e) {
   if (!touchDown) return
   var touch = e.touches[0]
   touchX = touch.clientX; touchY = touch.clientY
+  // 摇杆跟踪
+  if ((scene === 'match' || scene === 'chlAttack' || scene === 'chlDefend') && joystick.active) {
+    for (var ti = 0; ti < e.changedTouches.length; ti++) {
+      var ct = e.changedTouches[ti]
+      if (ct.identifier === joystick.touchId) {
+        var jdx = ct.clientX - joystick.baseX, jdy = ct.clientY - joystick.baseY
+        var jd = Math.sqrt(jdx * jdx + jdy * jdy)
+        if (jd > JOY_RADIUS) { jdx = jdx / jd * JOY_RADIUS; jdy = jdy / jd * JOY_RADIUS }
+        joystick.dx = jdx; joystick.dy = jdy
+        joystick.stickX = joystick.baseX + jdx; joystick.stickY = joystick.baseY + jdy
+        break
+      }
+    }
+  }
 })
 
 wx.onTouchEnd(function(e) {
-  if (!touchDown) return
-  touchDown = false
-  playerGrabbed = false
+  // 多点触控：只有所有手指都抬起才算touchDown=false
+  if (e.touches.length === 0) { touchDown = false; playerGrabbed = false }
+  else { touchDown = true }
 
   var dx = touchX - touchStartX, dy = touchY - touchStartY
   var dist = Math.sqrt(dx * dx + dy * dy)
   var now = Date.now()
 
-  // 比赛中：射门/传球（滑动距离 = 力度）
-  if (scene === 'match' && ball.side === 'my' && ball.idx === ctrlIdx && matchCountdown <= 0) {
-    if (dist > 18 && (now - lastSwipeTime) > 250) {
-      lastSwipeTime = now
-      var power = Math.min(dist / 80, 1.5) // 滑动越长力度越大，上限1.5
-      if (dy < -10) {
-        myShoot(dx * 0.35, dy * 0.35, power)
-      } else {
-        myPass(dx, dy, power)
+  // 摇杆 / 按钮释放
+  if (scene === 'match' || scene === 'chlAttack' || scene === 'chlDefend') {
+    for (var ti = 0; ti < e.changedTouches.length; ti++) {
+      var ct = e.changedTouches[ti]
+      if (ct.identifier === joystick.touchId) {
+        joystick.active = false; joystick.touchId = -1
+        joystick.dx = 0; joystick.dy = 0
       }
+      if (ct.identifier === shootBtnTouchId) {
+        // 松开射门：根据蓄力时间计算力度
+        if (ball.side==='my'&&ball.idx===ctrlIdx) {
+          var chgT = Math.min(Date.now() - shootChargeStart, CHARGE_MAX_MS)
+          var power = 0.5 + (chgT / CHARGE_MAX_MS) * 1.0 // 0.5 ~ 1.5
+          var jD2=Math.sqrt(joystick.dx*joystick.dx+joystick.dy*joystick.dy)
+          if (jD2>3) { myShoot(joystick.dx*0.35, -Math.abs(joystick.dy)*0.35-5, power) }
+          else { myShoot(0, -1, power) }
+        }
+        shootBtnPressed = false; shootBtnTouchId = -1; shootChargeStart = 0
+      }
+      if (ct.identifier === passBtnTouchId) {
+        // 松开传球：根据蓄力时间计算力度
+        if (ball.side==='my'&&ball.idx===ctrlIdx) {
+          var chgTP = Math.min(Date.now() - passChargeStart, CHARGE_MAX_MS)
+          var powerP = 0.5 + (chgTP / CHARGE_MAX_MS) * 1.0
+          var jD3=Math.sqrt(joystick.dx*joystick.dx+joystick.dy*joystick.dy)
+          if (jD3>3) { myPass(joystick.dx, joystick.dy, powerP) }
+          else { myPass(0, -1, powerP) }
+        }
+        passBtnPressed = false; passBtnTouchId = -1; passChargeStart = 0
+      }
+      if (ct.identifier === switchBtnTouchId) { switchBtnPressed = false; switchBtnTouchId = -1 }
     }
   }
 
-  // 好友挑战射门
+  // 点球射门（蓄力释放）
   if (scene === 'chlAttack' && chlPhase === 'aim') {
-    if (dist > 18 && dy < -10 && (now - lastSwipeTime) > 250) {
-      lastSwipeTime = now
-      chlShoot(dx * 0.35, dy * 0.35)
+    for (var cti2 = 0; cti2 < e.changedTouches.length; cti2++) {
+      var cct2 = e.changedTouches[cti2]
+      if (cct2.identifier === shootBtnTouchId) {
+        var chgTC = Math.min(Date.now() - shootChargeStart, CHARGE_MAX_MS)
+        var pwC = 0.5 + (chgTC / CHARGE_MAX_MS) * 1.0
+        var jD5 = Math.sqrt(joystick.dx*joystick.dx + joystick.dy*joystick.dy)
+        if (jD5 > 3) { chlShoot(joystick.dx*0.35, -Math.abs(joystick.dy)*0.35-5, pwC) }
+        else { chlShoot(0, -1, pwC) }
+        shootBtnPressed = false; shootBtnTouchId = -1; shootChargeStart = 0
+      }
+      if (cct2.identifier === joystick.touchId) {
+        joystick.active = false; joystick.touchId = -1; joystick.dx = 0; joystick.dy = 0
+      }
     }
   }
 })
