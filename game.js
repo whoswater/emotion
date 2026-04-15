@@ -294,7 +294,7 @@ var BTN_SWITCH = { x: 0, y: 0, r: 22 }
 var shootBtnPressed = false, passBtnPressed = false, switchBtnPressed = false
 var shootBtnTouchId = -1, passBtnTouchId = -1, switchBtnTouchId = -1
 var shootChargeStart = 0, passChargeStart = 0 // 蓄力开始时间
-var CHARGE_MAX_MS = 800 // 最大蓄力时间ms
+var CHARGE_MAX_MS = 500 // 最大蓄力时间ms
 var leagueScrollY = 0 // 联赛地图滚动偏移
 // swipeVX/VY 已移除（未使用）
 
@@ -330,20 +330,28 @@ var pendingChallengeId = '' // 从分享链接进入的挑战ID
 function askNickname(cb) {
   if (_nickInputting) return
   _nickInputting = true
-  wx.showKeyboard({ defaultValue:'', maxLength:8, multiple:false, confirmHold:false, confirmType:'done' })
-  wx.onKeyboardConfirm(function(res) {
-    wx.offKeyboardConfirm(); wx.offKeyboardComplete(); _nickInputting = false
-    var name = (res.value||'').trim()
-    if (name) {
-      D.nickname = name.substring(0,8)
-      saveField('nickname', D.nickname)
-      wx.hideKeyboard()
-    }
+  // 用 wx.createTextInput 或 fallback 到默认昵称
+  try {
+    var input = wx.createTextInput({
+      x: W * 0.15, y: H * 0.4, width: W * 0.7, height: 40,
+      placeholder: '输入昵称（最多8字）',
+      maxLength: 8,
+      focus: true,
+      confirmType: 'done'
+    })
+    input.onConfirm(function(res) {
+      var name = (res.value || '').trim().substring(0, 8)
+      if (name) { D.nickname = name; saveField('nickname', D.nickname) }
+      input.destroy(); _nickInputting = false
+      if (cb) cb()
+    })
+  } catch(e) {
+    // fallback: 所有输入API都不可用，生成默认昵称
+    _nickInputting = false
+    D.nickname = '球员' + Math.floor(Math.random() * 9000 + 1000)
+    saveField('nickname', D.nickname)
     if (cb) cb()
-  })
-  wx.onKeyboardComplete(function() {
-    wx.offKeyboardConfirm(); wx.offKeyboardComplete(); _nickInputting = false; wx.hideKeyboard()
-  })
+  }
 }
 
 // ===== BUFF 效果 =====
@@ -3245,7 +3253,7 @@ wx.onTouchEnd(function(e) {
         // 松开射门：根据蓄力时间计算力度
         if (ball.side==='my'&&ball.idx===ctrlIdx) {
           var chgT = Math.min(Date.now() - shootChargeStart, CHARGE_MAX_MS)
-          var power = 0.5 + (chgT / CHARGE_MAX_MS) * 1.0 // 0.5 ~ 1.5
+          var power = 0.7 + (chgT / CHARGE_MAX_MS) * 0.8 // 0.7 ~ 1.5
           var jD2=Math.sqrt(joystick.dx*joystick.dx+joystick.dy*joystick.dy)
           if (jD2>3) { myShoot(joystick.dx*0.35, -Math.abs(joystick.dy)*0.35-5, power) }
           else { myShoot(0, -1, power) }
@@ -3256,7 +3264,7 @@ wx.onTouchEnd(function(e) {
         // 松开传球：根据蓄力时间计算力度
         if (ball.side==='my'&&ball.idx===ctrlIdx) {
           var chgTP = Math.min(Date.now() - passChargeStart, CHARGE_MAX_MS)
-          var powerP = 0.5 + (chgTP / CHARGE_MAX_MS) * 1.0
+          var powerP = 0.7 + (chgTP / CHARGE_MAX_MS) * 0.8
           var jD3=Math.sqrt(joystick.dx*joystick.dx+joystick.dy*joystick.dy)
           if (jD3>3) { myPass(joystick.dx, joystick.dy, powerP) }
           else { myPass(0, -1, powerP) }
@@ -3273,7 +3281,7 @@ wx.onTouchEnd(function(e) {
       var cct2 = e.changedTouches[cti2]
       if (cct2.identifier === shootBtnTouchId) {
         var chgTC = Math.min(Date.now() - shootChargeStart, CHARGE_MAX_MS)
-        var pwC = 0.5 + (chgTC / CHARGE_MAX_MS) * 1.0
+        var pwC = 0.7 + (chgTC / CHARGE_MAX_MS) * 0.8
         var jD5 = Math.sqrt(joystick.dx*joystick.dx + joystick.dy*joystick.dy)
         if (jD5 > 3) { chlShoot(joystick.dx*0.35, -Math.abs(joystick.dy)*0.35-5, pwC) }
         else { chlShoot(0, -1, pwC) }
