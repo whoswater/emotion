@@ -3370,9 +3370,9 @@ wx.onShareAppMessage(function() {
     var myT2 = getMyTeam()
     var opT2 = opponentTeam
     var res = myGoals > opGoals ? '获胜！' : myGoals === opGoals ? '战平！' : '惜败！'
-    return { title: '绿茵逐梦·' + myT2.city + ' ' + myGoals + ':' + opGoals + ' ' + opT2.city + ' ' + res + '来挑战⚽', query: '' }
+    return { title: '绿茵逐梦 · ' + myT2.city + ' ' + myGoals + ':' + opGoals + ' ' + opT2.city + ' ' + res, query: '' }
   }
-  return { title: '绿茵逐梦狂欢！苏超城市战队1v1对决 ⚽🏆', query: '' }
+  return { title: '绿茵逐梦 · 苏超城市足球对决', query: '' }
 })
 
 // ==================== 处理分享链接进入 ====================
